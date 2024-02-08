@@ -112,6 +112,27 @@ impl std::fmt::Debug for StrongHandle {
     }
 }
 
+impl StrongHandle {
+    /// Returns the [`UntypedAssetId`] for the referenced asset.
+    #[inline]
+    pub fn id(&self) -> UntypedAssetId {
+        self.id
+    }
+
+    /// Returns the path if the asset has a path.
+    #[inline]
+    pub fn path(&self) -> Option<&AssetPath<'static>> {
+        self.path.as_ref()
+    }
+
+    /// Returns the "meta transform" for the handle. This will only be [`Some`]
+    /// if there is a meta transform associated with it.
+    #[inline]
+    pub fn meta_transform(&self) -> Option<&MetaTransform> {
+        self.meta_transform.as_ref()
+    }
+}
+
 /// A strong or weak handle to a specific [`Asset`]. If a [`Handle`] is [`Handle::Strong`], the [`Asset`] will be kept
 /// alive until the [`Handle`] is dropped. If a [`Handle`] is [`Handle::Weak`], it does not necessarily reference a live [`Asset`],
 /// nor will it keep assets alive.
