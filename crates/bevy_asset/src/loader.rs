@@ -3,8 +3,8 @@ use crate::{
     loader_builders::{Deferred, NestedLoader, StaticTyped},
     meta::{AssetHash, AssetMeta, AssetMetaDyn, ProcessedInfoMinimal, Settings},
     path::AssetPath,
-    Asset, AssetLoadError, AssetServer, AssetServerMode, Assets, ErasedAssetIndex, Handle,
-    UntypedAssetId, UntypedHandle,
+    Asset, AssetIndex, AssetLoadError, AssetServer, AssetServerMode, Assets, ErasedAssetIndex,
+    Handle, UntypedHandle,
 };
 use alloc::{
     boxed::Box,
@@ -271,15 +271,15 @@ impl ErasedLoadedAsset {
 
 /// A type erased container for an [`Asset`] value that is capable of inserting the [`Asset`] into a [`World`]'s [`Assets`] collection.
 pub(crate) trait AssetContainer: Downcast + Any + Send + Sync + 'static {
-    fn insert(self: Box<Self>, id: UntypedAssetId, world: &mut World);
+    fn insert(self: Box<Self>, id: AssetIndex, world: &mut World);
     fn asset_type_name(&self) -> &'static str;
 }
 
 impl_downcast!(AssetContainer);
 
 impl<A: Asset> AssetContainer for A {
-    fn insert(self: Box<Self>, id: UntypedAssetId, world: &mut World) {
-        world.resource_mut::<Assets<A>>().insert(id.typed(), *self);
+    fn insert(self: Box<Self>, index: AssetIndex, world: &mut World) {
+        world.resource_mut::<Assets<A>>().insert(index, *self);
     }
 
     fn asset_type_name(&self) -> &'static str {
