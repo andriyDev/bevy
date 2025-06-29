@@ -25,6 +25,7 @@ use bevy_render::camera::extract_cameras;
 use bevy_render::render_phase::{DrawFunctionId, InputUniformIndex};
 use bevy_render::render_resource::CachedRenderPipelineId;
 use bevy_render::view::RenderVisibleEntities;
+use bevy_render::RenderStartup;
 use bevy_render::{
     mesh::{MeshVertexBufferLayoutRef, RenderMesh},
     render_asset::{
@@ -285,6 +286,9 @@ where
                 .add_render_command::<Transparent2d, DrawMaterial2d<M>>()
                 .init_resource::<RenderMaterial2dInstances<M>>()
                 .init_resource::<SpecializedMeshPipelines<Material2dPipeline<M>>>()
+                .add_systems(RenderStartup, |world: &mut World| {
+                    world.init_resource::<Material2dPipeline<M>>();
+                })
                 .add_systems(
                     ExtractSchedule,
                     (
@@ -304,12 +308,6 @@ where
                             .after(prepare_assets::<PreparedMaterial2d<M>>),
                     ),
                 );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<Material2dPipeline<M>>();
         }
     }
 }

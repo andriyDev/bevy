@@ -105,8 +105,8 @@ use tracing::warn;
 use bevy_platform::collections::HashMap;
 
 use bevy_app::prelude::*;
-use bevy_asset::AssetApp;
-use bevy_ecs::prelude::Resource;
+use bevy_asset::{AssetApp, AssetServer};
+use bevy_ecs::{prelude::Resource, system::Res};
 use bevy_image::{CompressedImageFormatSupport, CompressedImageFormats, ImageSamplerDescriptor};
 use bevy_mesh::MeshVertexAttribute;
 
@@ -208,6 +208,10 @@ impl GltfPlugin {
 
 impl Plugin for GltfPlugin {
     fn build(&self, app: &mut App) {
+        // Clone these so we can move them later.
+        let custom_vertex_attributes = self.custom_vertex_attributes.clone();
+        let convert_coordinates = self.convert_coordinates;
+
         app.register_type::<GltfExtras>()
             .register_type::<GltfSceneExtras>()
             .register_type::<GltfMeshExtras>()
@@ -219,29 +223,46 @@ impl Plugin for GltfPlugin {
             .init_asset::<GltfPrimitive>()
             .init_asset::<GltfMesh>()
             .init_asset::<GltfSkin>()
-            .preregister_asset_loader::<GltfLoader>(&["gltf", "glb"]);
+            .preregister_asset_loader::<GltfLoader>(&["gltf", "glb"])
+            .insert_resource(DefaultGltfImageSampler::new(&self.default_sampler))
+            .add_systems(
+                PreStartup,
+                // Create a closure to move in the self fields, and then just call another function
+                // with those passed in.
+                move |supported_compressed_formats: Option<Res<CompressedImageFormatSupport>>,
+                      default_sampler: Res<DefaultGltfImageSampler>,
+                      asset_server: Res<AssetServer>| {
+                    register_gltf_loader(
+                        custom_vertex_attributes.clone(),
+                        convert_coordinates,
+                        supported_compressed_formats,
+                        default_sampler,
+                        asset_server,
+                    );
+                },
+            );
     }
+}
 
-    fn finish(&self, app: &mut App) {
-        let supported_compressed_formats = if let Some(resource) =
-            app.world().get_resource::<CompressedImageFormatSupport>()
-        {
-            resource.0
-        } else {
-            warn!("CompressedImageFormatSupport resource not found. It should either be initialized in finish() of \
+fn register_gltf_loader(
+    custom_vertex_attributes: HashMap<Box<str>, MeshVertexAttribute>,
+    convert_coordinates: bool,
+    supported_compressed_formats: Option<Res<CompressedImageFormatSupport>>,
+    default_sampler: Res<DefaultGltfImageSampler>,
+    asset_server: Res<AssetServer>,
+) {
+    let supported_compressed_formats = if let Some(resource) = supported_compressed_formats {
+        resource.0
+    } else {
+        warn!("CompressedImageFormatSupport resource not found. It should either be initialized in finish() of \
             RenderPlugin, or manually if not using the RenderPlugin or the WGPU backend.");
-            CompressedImageFormats::NONE
-        };
+        CompressedImageFormats::NONE
+    };
 
-        let default_sampler_resource = DefaultGltfImageSampler::new(&self.default_sampler);
-        let default_sampler = default_sampler_resource.get_internal();
-        app.insert_resource(default_sampler_resource);
-
-        app.register_asset_loader(GltfLoader {
-            supported_compressed_formats,
-            custom_vertex_attributes: self.custom_vertex_attributes.clone(),
-            default_sampler,
-            default_convert_coordinates: self.convert_coordinates,
-        });
-    }
+    asset_server.register_loader(GltfLoader {
+        supported_compressed_formats,
+        custom_vertex_attributes,
+        default_sampler: default_sampler.get_internal(),
+        default_convert_coordinates: convert_coordinates,
+    });
 }

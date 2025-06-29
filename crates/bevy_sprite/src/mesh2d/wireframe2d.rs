@@ -49,7 +49,7 @@ use bevy_render::{
     view::{
         ExtractedView, RenderVisibleEntities, RetainedViewEntity, ViewDepthTexture, ViewTarget,
     },
-    Extract, Render, RenderApp, RenderDebugFlags, RenderSystems,
+    Extract, Render, RenderApp, RenderDebugFlags, RenderStartup, RenderSystems,
 };
 use core::{hash::Hash, ops::Range};
 use tracing::error;
@@ -129,6 +129,9 @@ impl Plugin for Wireframe2dPlugin {
                     Node2d::PostProcessing,
                 ),
             )
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<Wireframe2dPipeline>();
+            })
             .add_systems(
                 ExtractSchedule,
                 (
@@ -149,13 +152,6 @@ impl Plugin for Wireframe2dPlugin {
                         .after(prepare_assets::<RenderWireframeMaterial>),
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<Wireframe2dPipeline>();
     }
 }
 

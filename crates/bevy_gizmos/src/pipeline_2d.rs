@@ -17,7 +17,6 @@ use bevy_ecs::{
 };
 use bevy_image::BevyDefault as _;
 use bevy_math::FloatOrd;
-use bevy_render::sync_world::MainEntity;
 use bevy_render::{
     render_asset::{prepare_assets, RenderAssets},
     render_phase::{
@@ -28,6 +27,7 @@ use bevy_render::{
     view::{ExtractedView, Msaa, RenderLayers, ViewTarget},
     Render, RenderApp, RenderSystems,
 };
+use bevy_render::{sync_world::MainEntity, RenderStartup};
 use bevy_sprite::{Mesh2dPipeline, Mesh2dPipelineKey, SetMesh2dViewBindGroup};
 use tracing::error;
 
@@ -54,21 +54,16 @@ impl Plugin for LineGizmo2dPlugin {
                         bevy_sprite::queue_material2d_meshes::<bevy_sprite::ColorMaterial>,
                     ),
             )
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<LineGizmoPipeline>();
+                world.init_resource::<LineJointGizmoPipeline>();
+            })
             .add_systems(
                 Render,
                 (queue_line_gizmos_2d, queue_line_joint_gizmos_2d)
                     .in_set(GizmoRenderSystems::QueueLineGizmos2d)
                     .after(prepare_assets::<GpuLineGizmo>),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<LineGizmoPipeline>();
-        render_app.init_resource::<LineJointGizmoPipeline>();
     }
 }
 

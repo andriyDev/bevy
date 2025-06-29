@@ -18,7 +18,7 @@ use bevy_render::{
     },
     renderer::RenderDevice,
     view::{ExtractedView, ViewTarget},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 
 mod node;
@@ -113,6 +113,9 @@ impl Plugin for CasPlugin {
         };
         render_app
             .init_resource::<SpecializedRenderPipelines<CasPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<CasPipeline>();
+            })
             .add_systems(Render, prepare_cas_pipelines.in_set(RenderSystems::Prepare));
 
         {
@@ -149,13 +152,6 @@ impl Plugin for CasPlugin {
                     ),
                 );
         }
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<CasPipeline>();
     }
 }
 

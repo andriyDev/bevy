@@ -176,10 +176,29 @@ impl Plugin for GizmoPlugin {
 
         #[cfg(feature = "bevy_render")]
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(
-                Render,
-                prepare_line_gizmo_bind_group.in_set(RenderSystems::PrepareBindGroups),
-            );
+            use bevy_render::RenderStartup;
+
+            render_app
+                .add_systems(
+                    RenderStartup,
+                    |render_device: Res<RenderDevice>, mut commands: Commands| {
+                        let line_layout = render_device.create_bind_group_layout(
+                            "LineGizmoUniform layout",
+                            &BindGroupLayoutEntries::single(
+                                ShaderStages::VERTEX,
+                                uniform_buffer::<LineGizmoUniform>(true),
+                            ),
+                        );
+
+                        commands.insert_resource(LineGizmoUniformBindgroupLayout {
+                            layout: line_layout,
+                        });
+                    },
+                )
+                .add_systems(
+                    Render,
+                    prepare_line_gizmo_bind_group.in_set(RenderSystems::PrepareBindGroups),
+                );
 
             render_app.add_systems(ExtractSchedule, (extract_gizmo_data, extract_linegizmos));
 
@@ -198,26 +217,6 @@ impl Plugin for GizmoPlugin {
         } else {
             tracing::warn!("bevy_render feature is enabled but RenderApp was not detected. Are you sure you loaded GizmoPlugin after RenderPlugin?");
         }
-    }
-
-    #[cfg(feature = "bevy_render")]
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        let render_device = render_app.world().resource::<RenderDevice>();
-        let line_layout = render_device.create_bind_group_layout(
-            "LineGizmoUniform layout",
-            &BindGroupLayoutEntries::single(
-                ShaderStages::VERTEX,
-                uniform_buffer::<LineGizmoUniform>(true),
-            ),
-        );
-
-        render_app.insert_resource(LineGizmoUniformBindgroupLayout {
-            layout: line_layout,
-        });
     }
 }
 

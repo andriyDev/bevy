@@ -14,7 +14,6 @@ use bevy_ecs::{
 use bevy_image::prelude::*;
 use bevy_math::{Affine2, FloatOrd, Rect, Vec2};
 use bevy_platform::collections::HashMap;
-use bevy_render::sync_world::MainEntity;
 use bevy_render::{
     render_asset::RenderAssets,
     render_phase::*,
@@ -25,6 +24,7 @@ use bevy_render::{
     view::*,
     Extract, ExtractSchedule, Render, RenderSystems,
 };
+use bevy_render::{sync_world::MainEntity, RenderStartup};
 use bevy_sprite::{SliceScaleMode, SpriteAssetEvents, SpriteImageMode, TextureSlicer};
 use binding_types::{sampler, texture_2d};
 use bytemuck::{Pod, Zeroable};
@@ -36,31 +36,29 @@ impl Plugin for UiTextureSlicerPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "ui_texture_slice.wgsl");
 
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .add_render_command::<TransparentUi, DrawUiTextureSlices>()
-                .init_resource::<ExtractedUiTextureSlices>()
-                .init_resource::<UiTextureSliceMeta>()
-                .init_resource::<UiTextureSliceImageBindGroups>()
-                .init_resource::<SpecializedRenderPipelines<UiTextureSlicePipeline>>()
-                .add_systems(
-                    ExtractSchedule,
-                    extract_ui_texture_slices.in_set(RenderUiSystems::ExtractTextureSlice),
-                )
-                .add_systems(
-                    Render,
-                    (
-                        queue_ui_slices.in_set(RenderSystems::Queue),
-                        prepare_ui_slices.in_set(RenderSystems::PrepareBindGroups),
-                    ),
-                );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<UiTextureSlicePipeline>();
-        }
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .add_render_command::<TransparentUi, DrawUiTextureSlices>()
+            .init_resource::<ExtractedUiTextureSlices>()
+            .init_resource::<UiTextureSliceMeta>()
+            .init_resource::<UiTextureSliceImageBindGroups>()
+            .init_resource::<SpecializedRenderPipelines<UiTextureSlicePipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<UiTextureSlicePipeline>();
+            })
+            .add_systems(
+                ExtractSchedule,
+                extract_ui_texture_slices.in_set(RenderUiSystems::ExtractTextureSlice),
+            )
+            .add_systems(
+                Render,
+                (
+                    queue_ui_slices.in_set(RenderSystems::Queue),
+                    prepare_ui_slices.in_set(RenderSystems::PrepareBindGroups),
+                ),
+            );
     }
 }
 

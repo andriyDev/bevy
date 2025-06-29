@@ -20,7 +20,6 @@ use bevy_math::{
     FloatOrd, Rect, Vec2,
 };
 use bevy_math::{Affine2, Vec2Swizzles};
-use bevy_render::sync_world::MainEntity;
 use bevy_render::{
     render_phase::*,
     render_resource::{binding_types::uniform_buffer, *},
@@ -29,6 +28,7 @@ use bevy_render::{
     view::*,
     Extract, ExtractSchedule, Render, RenderSystems,
 };
+use bevy_render::{sync_world::MainEntity, RenderStartup};
 use bevy_sprite::BorderRect;
 use bytemuck::{Pod, Zeroable};
 
@@ -40,33 +40,31 @@ impl Plugin for GradientPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "gradient.wgsl");
 
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .add_render_command::<TransparentUi, DrawGradientFns>()
-                .init_resource::<ExtractedGradients>()
-                .init_resource::<ExtractedColorStops>()
-                .init_resource::<GradientMeta>()
-                .init_resource::<SpecializedRenderPipelines<GradientPipeline>>()
-                .add_systems(
-                    ExtractSchedule,
-                    extract_gradients
-                        .in_set(RenderUiSystems::ExtractGradient)
-                        .after(extract_uinode_background_colors),
-                )
-                .add_systems(
-                    Render,
-                    (
-                        queue_gradient.in_set(RenderSystems::Queue),
-                        prepare_gradient.in_set(RenderSystems::PrepareBindGroups),
-                    ),
-                );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<GradientPipeline>();
-        }
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .add_render_command::<TransparentUi, DrawGradientFns>()
+            .init_resource::<ExtractedGradients>()
+            .init_resource::<ExtractedColorStops>()
+            .init_resource::<GradientMeta>()
+            .init_resource::<SpecializedRenderPipelines<GradientPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<GradientPipeline>();
+            })
+            .add_systems(
+                ExtractSchedule,
+                extract_gradients
+                    .in_set(RenderUiSystems::ExtractGradient)
+                    .after(extract_uinode_background_colors),
+            )
+            .add_systems(
+                Render,
+                (
+                    queue_gradient.in_set(RenderSystems::Queue),
+                    prepare_gradient.in_set(RenderSystems::PrepareBindGroups),
+                ),
+            );
     }
 }
 

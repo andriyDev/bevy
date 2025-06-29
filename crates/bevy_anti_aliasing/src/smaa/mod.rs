@@ -346,6 +346,9 @@ impl Plugin for SmaaPlugin {
         render_app
             .init_resource::<SmaaSpecializedRenderPipelines>()
             .init_resource::<SmaaInfoUniformBuffer>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<SmaaPipelines>();
+            })
             .add_systems(
                 Render,
                 (
@@ -373,12 +376,6 @@ impl Plugin for SmaaPlugin {
                     Node2d::EndMainPassPostProcessing,
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<SmaaPipelines>();
-        }
     }
 }
 

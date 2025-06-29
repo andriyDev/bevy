@@ -18,7 +18,7 @@ use bevy_render::{
     },
     renderer::RenderDevice,
     view::{ExtractedView, ViewTarget},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_utils::default;
 
@@ -94,6 +94,9 @@ impl Plugin for FxaaPlugin {
         };
         render_app
             .init_resource::<SpecializedRenderPipelines<FxaaPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<FxaaPipeline>();
+            })
             .add_systems(
                 Render,
                 prepare_fxaa_pipelines.in_set(RenderSystems::Prepare),
@@ -116,13 +119,6 @@ impl Plugin for FxaaPlugin {
                     Node2d::EndMainPassPostProcessing,
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<FxaaPipeline>();
     }
 }
 

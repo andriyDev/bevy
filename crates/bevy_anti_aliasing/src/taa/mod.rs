@@ -36,7 +36,7 @@ use bevy_render::{
     sync_world::RenderEntity,
     texture::{CachedTexture, TextureCache},
     view::{ExtractedView, Msaa, ViewTarget},
-    ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
+    ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
 };
 use tracing::warn;
 
@@ -58,6 +58,9 @@ impl Plugin for TemporalAntiAliasPlugin {
         };
         render_app
             .init_resource::<SpecializedRenderPipelines<TaaPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<TaaPipeline>();
+            })
             .add_systems(ExtractSchedule, extract_taa_settings)
             .add_systems(
                 Render,
@@ -78,14 +81,6 @@ impl Plugin for TemporalAntiAliasPlugin {
                     Node3d::Tonemapping,
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<TaaPipeline>();
     }
 }
 
