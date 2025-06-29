@@ -25,7 +25,6 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_image::prelude::*;
 use bevy_math::{Affine2, FloatOrd, Mat4, Rect, UVec4, Vec2};
-use bevy_render::load_shader_library;
 use bevy_render::render_graph::{NodeRunError, RenderGraphContext};
 use bevy_render::render_phase::ViewSortedRenderPhases;
 use bevy_render::renderer::RenderContext;
@@ -42,6 +41,7 @@ use bevy_render::{
     view::{ExtractedView, ViewUniforms},
     Extract, RenderApp, RenderSystems,
 };
+use bevy_render::{load_shader_library, RenderStartup};
 use bevy_render::{
     render_phase::{PhaseItem, PhaseItemExtraIndex},
     sync_world::{RenderEntity, TemporaryRenderEntity},
@@ -155,6 +155,9 @@ pub fn build_ui_render(app: &mut App) {
             )
                 .chain(),
         )
+        .add_systems(RenderStartup, |world: &mut World| {
+            world.init_resource::<UiPipeline>();
+        })
         .add_systems(
             ExtractSchedule,
             (

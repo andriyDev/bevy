@@ -266,18 +266,6 @@ impl Plugin for UiPlugin {
 
         build_ui_render(app);
     }
-
-    fn finish(&self, app: &mut App) {
-        if !self.enable_rendering {
-            return;
-        }
-
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<UiPipeline>();
-    }
 }
 
 fn build_text_interop(app: &mut App) {
