@@ -1,7 +1,7 @@
 use crate::{
     render_resource::{GpuArrayBuffer, GpuArrayBufferable},
     renderer::{RenderDevice, RenderQueue},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_app::{App, Plugin};
 use bevy_ecs::{
@@ -17,20 +17,14 @@ pub struct GpuComponentArrayBufferPlugin<C: Component + GpuArrayBufferable>(Phan
 
 impl<C: Component + GpuArrayBufferable> Plugin for GpuComponentArrayBufferPlugin<C> {
     fn build(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(
-                Render,
-                prepare_gpu_component_array_buffers::<C>.in_set(RenderSystems::PrepareResources),
-            );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.insert_resource(GpuArrayBuffer::<C>::new(
-                render_app.world().resource::<RenderDevice>(),
-            ));
-        }
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app.add_systems(RenderStartup, init_gpu_array_buffer::<C>);
+        render_app.add_systems(
+            Render,
+            prepare_gpu_component_array_buffers::<C>.in_set(RenderSystems::PrepareResources),
+        );
     }
 }
 
@@ -38,6 +32,13 @@ impl<C: Component + GpuArrayBufferable> Default for GpuComponentArrayBufferPlugi
     fn default() -> Self {
         Self(PhantomData::<C>)
     }
+}
+
+fn init_gpu_array_buffer<C: Component + GpuArrayBufferable>(
+    render_device: Res<RenderDevice>,
+    mut commands: Commands,
+) {
+    commands.insert_resource(GpuArrayBuffer::<C>::new(&render_device));
 }
 
 fn prepare_gpu_component_array_buffers<C: Component + GpuArrayBufferable>(

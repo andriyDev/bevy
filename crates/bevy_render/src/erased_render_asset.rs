@@ -122,23 +122,21 @@ impl<A: ErasedRenderAsset, AFTER: ErasedRenderAssetDependency + 'static> Plugin
 {
     fn build(&self, app: &mut App) {
         app.init_resource::<CachedExtractErasedRenderAssetSystemState<A>>();
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .init_resource::<ExtractedAssets<A>>()
-                .init_resource::<ErasedRenderAssets<A::ErasedAsset>>()
-                .init_resource::<PrepareNextFrameAssets<A>>()
-                .add_systems(
-                    ExtractSchedule,
-                    extract_erased_render_asset::<A>.in_set(AssetExtractionSystems),
-                );
-            AFTER::register_system(
-                render_app,
-                prepare_erased_assets::<A>.in_set(RenderSystems::PrepareAssets),
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .init_resource::<ExtractedAssets<A>>()
+            .init_resource::<ErasedRenderAssets<A::ErasedAsset>>()
+            .init_resource::<PrepareNextFrameAssets<A>>()
+            .add_systems(
+                ExtractSchedule,
+                extract_erased_render_asset::<A>.in_set(AssetExtractionSystems),
             );
-        }
+        AFTER::register_system(
+            render_app,
+            prepare_erased_assets::<A>.in_set(RenderSystems::PrepareAssets),
+        );
     }
 }
 

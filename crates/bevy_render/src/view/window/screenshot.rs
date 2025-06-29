@@ -13,7 +13,7 @@ use crate::{
     renderer::RenderDevice,
     texture::{GpuImage, OutputColorAttachment},
     view::{prepare_view_attachments, prepare_view_targets, ViewTargetAttachments, WindowSurfaces},
-    ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
+    ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
 };
 use alloc::{borrow::Cow, sync::Arc};
 use bevy_app::{First, Plugin, Update};
@@ -390,39 +390,41 @@ pub struct ScreenshotPlugin;
 
 impl Plugin for ScreenshotPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.add_systems(
-            First,
-            clear_screenshots
-                .after(event_update_system)
-                .before(ApplyDeferred),
-        )
-        .register_type::<Screenshot>()
-        .register_type::<ScreenshotCaptured>();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.insert_resource(CapturedScreenshots(Arc::new(Mutex::new(rx))))
+            .add_systems(
+                First,
+                clear_screenshots
+                    .after(event_update_system)
+                    .before(ApplyDeferred),
+            )
+            .add_systems(Update, trigger_screenshots)
+            .register_type::<Screenshot>()
+            .register_type::<ScreenshotCaptured>();
 
         embedded_asset!(app, "screenshot.wgsl");
-    }
 
-    fn finish(&self, app: &mut bevy_app::App) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        app.add_systems(Update, trigger_screenshots)
-            .insert_resource(CapturedScreenshots(Arc::new(Mutex::new(rx))));
-
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .insert_resource(RenderScreenshotsSender(tx))
-                .init_resource::<RenderScreenshotTargets>()
-                .init_resource::<RenderScreenshotsPrepared>()
-                .init_resource::<SpecializedRenderPipelines<ScreenshotToScreenPipeline>>()
-                .init_resource::<ScreenshotToScreenPipeline>()
-                .add_systems(ExtractSchedule, extract_screenshots.ambiguous_with_all())
-                .add_systems(
-                    Render,
-                    prepare_screenshots
-                        .after(prepare_view_attachments)
-                        .before(prepare_view_targets)
-                        .in_set(RenderSystems::ManageViews),
-                );
-        }
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .insert_resource(RenderScreenshotsSender(tx))
+            // These resources impl Default, so they are safe to just init here.
+            .init_resource::<RenderScreenshotTargets>()
+            .init_resource::<RenderScreenshotsPrepared>()
+            .init_resource::<SpecializedRenderPipelines<ScreenshotToScreenPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                // This resource needs RenderDevice, which is only available in `RenderStartup`.
+                world.init_resource::<ScreenshotToScreenPipeline>();
+            })
+            .add_systems(ExtractSchedule, extract_screenshots.ambiguous_with_all())
+            .add_systems(
+                Render,
+                prepare_screenshots
+                    .after(prepare_view_attachments)
+                    .before(prepare_view_targets)
+                    .in_set(RenderSystems::ManageViews),
+            );
     }
 }
 

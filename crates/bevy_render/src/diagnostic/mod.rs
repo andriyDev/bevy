@@ -7,11 +7,12 @@ pub(crate) mod internal;
 mod tracy_gpu;
 
 use alloc::{borrow::Cow, sync::Arc};
+use bevy_ecs::system::{Commands, Res};
 use core::marker::PhantomData;
 
 use bevy_app::{App, Plugin, PreUpdate};
 
-use crate::{renderer::RenderAdapterInfo, RenderApp};
+use crate::{renderer::RenderAdapterInfo, RenderApp, RenderStartup};
 
 use self::internal::{
     sync_diagnostics, DiagnosticsRecorder, Pass, RenderDiagnosticsMutex, WriteTimestamp,
@@ -54,21 +55,26 @@ impl Plugin for RenderDiagnosticsPlugin {
         app.insert_resource(render_diagnostics_mutex.clone())
             .add_systems(PreUpdate, sync_diagnostics);
 
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.insert_resource(render_diagnostics_mutex);
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
+        render_app.insert_resource(render_diagnostics_mutex);
 
-        let adapter_info = render_app.world().resource::<RenderAdapterInfo>();
-        let device = render_app.world().resource::<RenderDevice>();
-        let queue = render_app.world().resource::<RenderQueue>();
-        render_app.insert_resource(DiagnosticsRecorder::new(adapter_info, device, queue));
+        render_app.add_systems(RenderStartup, init_diagnostics_recorder);
     }
+}
+
+fn init_diagnostics_recorder(
+    render_adapter_info: Res<RenderAdapterInfo>,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    mut commands: Commands,
+) {
+    commands.insert_resource(DiagnosticsRecorder::new(
+        &render_adapter_info,
+        &render_device,
+        &render_queue,
+    ));
 }
 
 /// Allows recording diagnostic spans.

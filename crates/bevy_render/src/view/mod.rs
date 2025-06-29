@@ -23,7 +23,7 @@ use crate::{
         CachedTexture, ColorAttachment, DepthAttachment, GpuImage, OutputColorAttachment,
         TextureCache,
     },
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use alloc::sync::Arc;
 use bevy_app::{App, Plugin};
@@ -119,6 +119,10 @@ impl Plugin for ViewPlugin {
             ));
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<ViewUniforms>();
+                world.init_resource::<ViewTargetAttachments>();
+            });
             render_app.add_systems(
                 Render,
                 (
@@ -138,14 +142,6 @@ impl Plugin for ViewPlugin {
                     prepare_view_uniforms.in_set(RenderSystems::PrepareResources),
                 ),
             );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .init_resource::<ViewUniforms>()
-                .init_resource::<ViewTargetAttachments>();
         }
     }
 }

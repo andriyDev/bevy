@@ -30,7 +30,7 @@ use crate::{
     render_asset::{prepare_assets, ExtractedAssets},
     render_resource::Buffer,
     renderer::{RenderAdapter, RenderDevice, RenderQueue},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 
 /// A plugin that manages GPU memory for mesh data.
@@ -315,22 +315,17 @@ impl Plugin for MeshAllocatorPlugin {
 
         render_app
             .init_resource::<MeshAllocatorSettings>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                // The `RenderAdapter` isn't available until now, so we can't do this directly in
+                // [`Plugin::build`].
+                world.init_resource::<MeshAllocator>();
+            })
             .add_systems(
                 Render,
                 allocate_and_free_meshes
                     .in_set(RenderSystems::PrepareAssets)
                     .before(prepare_assets::<RenderMesh>),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        // The `RenderAdapter` isn't available until now, so we can't do this in
-        // [`Plugin::build`].
-        render_app.init_resource::<MeshAllocator>();
     }
 }
 

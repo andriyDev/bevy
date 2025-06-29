@@ -36,7 +36,7 @@ use crate::{
     renderer::{RenderAdapter, RenderDevice, RenderQueue},
     sync_world::MainEntity,
     view::{ExtractedView, NoIndirectDrawing, RetainedViewEntity},
-    Render, RenderApp, RenderDebugFlags, RenderSystems,
+    Render, RenderApp, RenderDebugFlags, RenderStartup, RenderSystems,
 };
 
 use super::{BatchMeta, GetBatchData, GetFullBatchData};
@@ -53,6 +53,10 @@ impl Plugin for BatchingPlugin {
             return;
         };
 
+        render_app.add_systems(RenderStartup, |world: &mut World| {
+            world.init_resource::<GpuPreprocessingSupport>();
+        });
+
         render_app
             .insert_resource(IndirectParametersBuffers::new(
                 self.debug_flags
@@ -66,14 +70,6 @@ impl Plugin for BatchingPlugin {
                 Render,
                 clear_indirect_parameters_buffers.in_set(RenderSystems::ManageViews),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<GpuPreprocessingSupport>();
     }
 }
 

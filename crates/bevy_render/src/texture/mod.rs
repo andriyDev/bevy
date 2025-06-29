@@ -18,10 +18,11 @@ pub use texture_attachment::*;
 pub use texture_cache::*;
 
 use crate::{
-    render_asset::RenderAssetPlugin, renderer::RenderDevice, Render, RenderApp, RenderSystems,
+    render_asset::RenderAssetPlugin, renderer::RenderDevice, Render, RenderApp, RenderStartup,
+    RenderSystems,
 };
-use bevy_app::{App, Plugin};
-use bevy_asset::{weak_handle, AssetApp, Assets, Handle};
+use bevy_app::{App, Plugin, PreStartup};
+use bevy_asset::{weak_handle, AssetApp, AssetServer, Assets, Handle};
 use bevy_ecs::prelude::*;
 use tracing::warn;
 
@@ -102,43 +103,48 @@ impl Plugin for ImagePlugin {
         }
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<TextureCache>().add_systems(
-                Render,
-                update_texture_cache_system.in_set(RenderSystems::Cleanup),
-            );
+            let default_sampler = self.default_sampler.clone();
+            render_app
+                .init_resource::<TextureCache>()
+                .add_systems(RenderStartup, move |world: &mut World| {
+                    let default_sampler = {
+                        let device = world.resource::<RenderDevice>();
+                        device.create_sampler(&default_sampler.as_wgpu())
+                    };
+                    world.insert_resource(DefaultImageSampler(default_sampler));
+                    world.init_resource::<FallbackImage>();
+                    world.init_resource::<FallbackImageZero>();
+                    world.init_resource::<FallbackImageCubemap>();
+                    world.init_resource::<FallbackImageFormatMsaaCache>();
+                })
+                .add_systems(
+                    Render,
+                    update_texture_cache_system.in_set(RenderSystems::Cleanup),
+                );
         }
 
         if !ImageLoader::SUPPORTED_FILE_EXTENSIONS.is_empty() {
             app.preregister_asset_loader::<ImageLoader>(ImageLoader::SUPPORTED_FILE_EXTENSIONS);
+            if !ImageLoader::SUPPORTED_FORMATS.is_empty() {
+                // Insert the image loader in PreStartup so that anything in Startup can immediately
+                // use it.
+                app.add_systems(PreStartup, init_image_loader);
+            }
         }
     }
+}
 
-    fn finish(&self, app: &mut App) {
-        if !ImageLoader::SUPPORTED_FORMATS.is_empty() {
-            let supported_compressed_formats = if let Some(resource) =
-                app.world().get_resource::<CompressedImageFormatSupport>()
-            {
-                resource.0
-            } else {
-                warn!("CompressedImageFormatSupport resource not found. It should either be initialized in finish() of \
+fn init_image_loader(
+    supported_formats: Option<Res<CompressedImageFormatSupport>>,
+    asset_server: Res<AssetServer>,
+) {
+    let supported_compressed_formats = if let Some(resource) = supported_formats {
+        resource.0
+    } else {
+        warn!("CompressedImageFormatSupport resource not found. It should either be initialized in finish() of \
                        RenderPlugin, or manually if not using the RenderPlugin or the WGPU backend.");
-                CompressedImageFormats::NONE
-            };
+        CompressedImageFormats::NONE
+    };
 
-            app.register_asset_loader(ImageLoader::new(supported_compressed_formats));
-        }
-
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            let default_sampler = {
-                let device = render_app.world().resource::<RenderDevice>();
-                device.create_sampler(&self.default_sampler.as_wgpu())
-            };
-            render_app
-                .insert_resource(DefaultImageSampler(default_sampler))
-                .init_resource::<FallbackImage>()
-                .init_resource::<FallbackImageZero>()
-                .init_resource::<FallbackImageCubemap>()
-                .init_resource::<FallbackImageFormatMsaaCache>();
-        }
-    }
+    asset_server.register_loader(ImageLoader::new(supported_compressed_formats));
 }
