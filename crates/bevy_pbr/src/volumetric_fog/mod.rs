@@ -38,6 +38,7 @@ use bevy_core_pipeline::core_3d::{
 };
 use bevy_ecs::{
     component::Component, reflect::ReflectComponent, schedule::IntoScheduleConfigs as _,
+    world::World,
 };
 use bevy_image::Image;
 use bevy_math::{
@@ -51,7 +52,7 @@ use bevy_render::{
     render_resource::SpecializedRenderPipelines,
     sync_component::SyncComponentPlugin,
     view::Visibility,
-    ExtractSchedule, Render, RenderApp, RenderSystems,
+    ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_transform::components::Transform;
 use render::{
@@ -206,6 +207,9 @@ impl Plugin for VolumetricFogPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<VolumetricFogPipeline>>()
             .init_resource::<VolumetricFogUniformBuffer>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<VolumetricFogPipeline>();
+            })
             .add_systems(ExtractSchedule, render::extract_volumetric_fog)
             .add_systems(
                 Render,
@@ -216,16 +220,7 @@ impl Plugin for VolumetricFogPlugin {
                         .in_set(RenderSystems::Prepare)
                         .before(prepare_core_3d_depth_textures),
                 ),
-            );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app
-            .init_resource::<VolumetricFogPipeline>()
+            )
             .add_render_graph_node::<ViewNodeRunner<VolumetricFogNode>>(
                 Core3d,
                 NodePbr::VolumetricFog,

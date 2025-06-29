@@ -21,7 +21,7 @@ use bevy_render::{
     renderer::RenderAdapter,
     sync_world::RenderEntity,
     view::{RenderVisibilityRanges, RetainedViewEntity, VISIBILITY_RANGES_STORAGE_BUFFER_COUNT},
-    ExtractSchedule, Render, RenderApp, RenderDebugFlags, RenderSystems,
+    ExtractSchedule, Render, RenderApp, RenderDebugFlags, RenderStartup, RenderSystems,
 };
 pub use prepass_bindings::*;
 
@@ -84,21 +84,15 @@ impl Plugin for PrepassPipelinePlugin {
         };
 
         render_app
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<PrepassPipeline>();
+                world.init_resource::<PrepassViewBindGroup>();
+            })
             .add_systems(
                 Render,
                 prepare_prepass_view_bind_group.in_set(RenderSystems::PrepareBindGroups),
             )
             .init_resource::<SpecializedMeshPipelines<PrepassPipelineSpecializer>>();
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app
-            .init_resource::<PrepassPipeline>()
-            .init_resource::<PrepassViewBindGroup>();
     }
 }
 

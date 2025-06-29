@@ -25,7 +25,6 @@ use bevy_platform::{
     hash::FixedHasher,
 };
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
-use bevy_render::camera::extract_cameras;
 use bevy_render::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
     camera::ExtractedCamera,
@@ -54,6 +53,7 @@ use bevy_render::{
     },
     Extract, Render, RenderApp, RenderDebugFlags, RenderSystems,
 };
+use bevy_render::{camera::extract_cameras, RenderStartup};
 use core::{hash::Hash, ops::Range};
 use tracing::error;
 
@@ -132,6 +132,9 @@ impl Plugin for WireframePlugin {
                     Node3d::PostProcessing,
                 ),
             )
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<Wireframe3dPipeline>();
+            })
             .add_systems(
                 ExtractSchedule,
                 (
@@ -152,13 +155,6 @@ impl Plugin for WireframePlugin {
                         .after(prepare_assets::<RenderWireframeMaterial>),
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<Wireframe3dPipeline>();
     }
 }
 

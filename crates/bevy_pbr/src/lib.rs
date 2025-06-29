@@ -138,7 +138,7 @@ use bevy_render::{
     render_resource::ShaderRef,
     sync_component::SyncComponentPlugin,
     view::VisibilitySystems,
-    ExtractSchedule, Render, RenderApp, RenderDebugFlags, RenderSystems,
+    ExtractSchedule, Render, RenderApp, RenderDebugFlags, RenderStartup, RenderSystems,
 };
 
 use bevy_transform::TransformSystems;
@@ -350,6 +350,11 @@ impl Plugin for PbrPlugin {
 
         // Extract the required data from the main world
         render_app
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<ShadowSamplers>();
+                world.init_resource::<GlobalClusterableObjectMeta>();
+                world.init_resource::<FallbackBindlessResources>();
+            })
             .add_systems(
                 ExtractSchedule,
                 (
@@ -387,18 +392,6 @@ impl Plugin for PbrPlugin {
             NodePbr::LateShadowPass,
             Node3d::StartMainPass,
         ));
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        // Extract the required data from the main world
-        render_app
-            .init_resource::<ShadowSamplers>()
-            .init_resource::<GlobalClusterableObjectMeta>()
-            .init_resource::<FallbackBindlessResources>();
     }
 }
 

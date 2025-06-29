@@ -258,62 +258,59 @@ pub struct MaterialsPlugin {
 impl Plugin for MaterialsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((PrepassPipelinePlugin, PrepassPlugin::new(self.debug_flags)));
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .init_resource::<EntitySpecializationTicks>()
-                .init_resource::<SpecializedMaterialPipelineCache>()
-                .init_resource::<SpecializedMeshPipelines<MaterialPipelineSpecializer>>()
-                .init_resource::<LightKeyCache>()
-                .init_resource::<LightSpecializationTicks>()
-                .init_resource::<SpecializedShadowMaterialPipelineCache>()
-                .add_systems(
-                    Render,
-                    (
-                        specialize_material_meshes
-                            .in_set(RenderSystems::PrepareMeshes)
-                            .after(prepare_assets::<RenderMesh>)
-                            .after(collect_meshes_for_gpu_building)
-                            .after(set_mesh_motion_vector_flags),
-                        queue_material_meshes.in_set(RenderSystems::QueueMeshes),
-                    ),
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .init_resource::<EntitySpecializationTicks>()
+            .init_resource::<SpecializedMaterialPipelineCache>()
+            .init_resource::<SpecializedMeshPipelines<MaterialPipelineSpecializer>>()
+            .init_resource::<LightKeyCache>()
+            .init_resource::<LightSpecializationTicks>()
+            .init_resource::<SpecializedShadowMaterialPipelineCache>()
+            .init_resource::<DrawFunctions<Shadow>>()
+            .init_resource::<RenderMaterialInstances>()
+            .init_resource::<MaterialBindGroupAllocators>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<MaterialPipeline>();
+            })
+            .add_systems(
+                Render,
+                (
+                    specialize_material_meshes
+                        .in_set(RenderSystems::PrepareMeshes)
+                        .after(prepare_assets::<RenderMesh>)
+                        .after(collect_meshes_for_gpu_building)
+                        .after(set_mesh_motion_vector_flags),
+                    queue_material_meshes.in_set(RenderSystems::QueueMeshes),
+                ),
+            )
+            .add_systems(
+                Render,
+                (
+                    prepare_material_bind_groups,
+                    write_material_bind_group_buffers,
                 )
-                .add_systems(
-                    Render,
-                    (
-                        prepare_material_bind_groups,
-                        write_material_bind_group_buffers,
-                    )
-                        .chain()
-                        .in_set(RenderSystems::PrepareBindGroups),
-                )
-                .add_systems(
-                    Render,
-                    (
-                        check_views_lights_need_specialization.in_set(RenderSystems::PrepareAssets),
-                        // specialize_shadows also needs to run after prepare_assets::<PreparedMaterial>,
-                        // which is fine since ManageViews is after PrepareAssets
-                        specialize_shadows
-                            .in_set(RenderSystems::ManageViews)
-                            .after(prepare_lights),
-                        queue_shadows.in_set(RenderSystems::QueueMeshes),
-                    ),
-                );
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .init_resource::<DrawFunctions<Shadow>>()
-                .init_resource::<RenderMaterialInstances>()
-                .init_resource::<MaterialPipeline>()
-                .init_resource::<MaterialBindGroupAllocators>()
-                .add_render_command::<Shadow, DrawPrepass>()
-                .add_render_command::<Transmissive3d, DrawMaterial>()
-                .add_render_command::<Transparent3d, DrawMaterial>()
-                .add_render_command::<Opaque3d, DrawMaterial>()
-                .add_render_command::<AlphaMask3d, DrawMaterial>();
-        }
+                    .chain()
+                    .in_set(RenderSystems::PrepareBindGroups),
+            )
+            .add_systems(
+                Render,
+                (
+                    check_views_lights_need_specialization.in_set(RenderSystems::PrepareAssets),
+                    // specialize_shadows also needs to run after prepare_assets::<PreparedMaterial>,
+                    // which is fine since ManageViews is after PrepareAssets
+                    specialize_shadows
+                        .in_set(RenderSystems::ManageViews)
+                        .after(prepare_lights),
+                    queue_shadows.in_set(RenderSystems::QueueMeshes),
+                ),
+            )
+            .add_render_command::<Shadow, DrawPrepass>()
+            .add_render_command::<Transmissive3d, DrawMaterial>()
+            .add_render_command::<Transparent3d, DrawMaterial>()
+            .add_render_command::<Opaque3d, DrawMaterial>()
+            .add_render_command::<AlphaMask3d, DrawMaterial>();
     }
 }
 
@@ -370,8 +367,12 @@ where
             );
         }
 
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .add_systems(RenderStartup, init_material_bind_group_allocator::<M>)
+            .add_systems(
                 ExtractSchedule,
                 (
                     extract_mesh_materials::<M>.in_set(MaterialExtractionSystems),
@@ -381,32 +382,25 @@ where
                     extract_entities_needs_specialization::<M>.after(extract_cameras),
                 ),
             );
-        }
     }
+}
 
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.world_mut().resource_scope(
-            |world, mut bind_group_allocators: Mut<MaterialBindGroupAllocators>| {
-                let render_device = world.resource::<RenderDevice>();
-                bind_group_allocators.insert(
-                    TypeId::of::<M>(),
-                    MaterialBindGroupAllocator::new(
-                        render_device,
-                        M::label(),
-                        material_uses_bindless_resources::<M>(render_device)
-                            .then(|| M::bindless_descriptor())
-                            .flatten(),
-                        M::bind_group_layout(render_device),
-                        M::bindless_slot_count(),
-                    ),
-                );
-            },
-        );
-    }
+fn init_material_bind_group_allocator<M: Material>(
+    render_device: Res<RenderDevice>,
+    mut bind_group_allocators: ResMut<MaterialBindGroupAllocators>,
+) {
+    bind_group_allocators.insert(
+        TypeId::of::<M>(),
+        MaterialBindGroupAllocator::new(
+            &render_device,
+            M::label(),
+            material_uses_bindless_resources::<M>(&render_device)
+                .then(|| M::bindless_descriptor())
+                .flatten(),
+            M::bind_group_layout(&render_device),
+            M::bindless_slot_count(),
+        ),
+    );
 }
 
 /// A dummy [`AssetId`] that we use as a placeholder whenever a mesh doesn't

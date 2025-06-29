@@ -21,6 +21,7 @@ use bevy_core_pipeline::{
 };
 use bevy_ecs::{prelude::*, query::QueryItem};
 use bevy_image::BevyDefault as _;
+use bevy_render::RenderStartup;
 use bevy_render::{
     extract_component::{
         ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
@@ -105,6 +106,9 @@ impl Plugin for DeferredPbrLightingPlugin {
 
         render_app
             .init_resource::<SpecializedRenderPipelines<DeferredLightingLayout>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<DeferredLightingLayout>();
+            })
             .add_systems(
                 Render,
                 (prepare_deferred_lighting_pipelines.in_set(RenderSystems::Prepare),),
@@ -121,14 +125,6 @@ impl Plugin for DeferredPbrLightingPlugin {
                     Node3d::MainOpaquePass,
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<DeferredLightingLayout>();
     }
 }
 
