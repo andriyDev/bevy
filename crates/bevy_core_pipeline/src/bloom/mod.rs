@@ -25,7 +25,7 @@ use bevy_render::{
     renderer::{RenderContext, RenderDevice},
     texture::{CachedTexture, TextureCache},
     view::ViewTarget,
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use downsampling_pipeline::{
     prepare_downsampling_pipeline, BloomDownsamplingPipeline, BloomDownsamplingPipelineIds,
@@ -59,6 +59,11 @@ impl Plugin for BloomPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<BloomDownsamplingPipeline>>()
             .init_resource::<SpecializedRenderPipelines<BloomUpsamplingPipeline>>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                // These resources need access to the `RenderDevice` to init.
+                world.init_resource::<BloomDownsamplingPipeline>();
+                world.init_resource::<BloomUpsamplingPipeline>();
+            })
             .add_systems(
                 Render,
                 (
@@ -80,15 +85,6 @@ impl Plugin for BloomPlugin {
                 Core2d,
                 (Node2d::EndMainPass, Node2d::Bloom, Node2d::Tonemapping),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app
-            .init_resource::<BloomDownsamplingPipeline>()
-            .init_resource::<BloomUpsamplingPipeline>();
     }
 }
 

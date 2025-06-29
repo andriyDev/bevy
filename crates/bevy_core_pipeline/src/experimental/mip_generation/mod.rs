@@ -25,7 +25,7 @@ use bevy_ecs::{
     world::{FromWorld, World},
 };
 use bevy_math::{uvec2, UVec2, Vec4Swizzles as _};
-use bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport;
+use bevy_render::{batching::gpu_preprocessing::GpuPreprocessingSupport, RenderStartup};
 use bevy_render::{
     experimental::occlusion_culling::{
         OcclusionCulling, OcclusionCullingSubview, OcclusionCullingSubviewEntities,
@@ -101,6 +101,9 @@ impl Plugin for MipGenerationPlugin {
                     Node3d::EndMainPassPostProcessing,
                 ),
             )
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<DepthPyramidDummyTexture>();
+            })
             .add_systems(
                 Render,
                 create_downsample_depth_pipelines.in_set(RenderSystems::Prepare),
@@ -116,13 +119,6 @@ impl Plugin for MipGenerationPlugin {
                     .run_if(resource_exists::<DownsampleDepthPipelines>)
                     .after(prepare_core_3d_depth_textures),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<DepthPyramidDummyTexture>();
     }
 }
 

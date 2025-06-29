@@ -55,7 +55,7 @@ use bevy_render::{
         prepare_view_targets, ExtractedView, Msaa, ViewDepthTexture, ViewTarget, ViewUniform,
         ViewUniformOffset, ViewUniforms,
     },
-    Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
+    Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_utils::{default, once};
 use smallvec::SmallVec;
@@ -219,6 +219,9 @@ impl Plugin for DepthOfFieldPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<DepthOfFieldPipeline>>()
             .init_resource::<DepthOfFieldGlobalBindGroup>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<DepthOfFieldGlobalBindGroupLayout>();
+            })
             .add_systems(ExtractSchedule, extract_depth_of_field_settings)
             .add_systems(
                 Render,
@@ -247,14 +250,6 @@ impl Plugin for DepthOfFieldPlugin {
                 Core3d,
                 (Node3d::Bloom, Node3d::DepthOfField, Node3d::Tonemapping),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<DepthOfFieldGlobalBindGroupLayout>();
     }
 }
 

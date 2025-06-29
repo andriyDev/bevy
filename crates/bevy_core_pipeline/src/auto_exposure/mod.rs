@@ -9,7 +9,7 @@ use bevy_render::{
         Buffer, BufferDescriptor, BufferUsages, PipelineCache, SpecializedComputePipelines,
     },
     renderer::RenderDevice,
-    ExtractSchedule, Render, RenderApp, RenderSystems,
+    ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems,
 };
 
 mod buffers;
@@ -61,6 +61,11 @@ impl Plugin for AutoExposurePlugin {
         render_app
             .init_resource::<SpecializedComputePipelines<AutoExposurePipeline>>()
             .init_resource::<AutoExposureBuffers>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                // These resources need access to the RenderDevice so init them in RenderStartup.
+                world.init_resource::<AutoExposurePipeline>();
+                world.init_resource::<AutoExposureResources>();
+            })
             .add_systems(ExtractSchedule, extract_buffers)
             .add_systems(
                 Render,
@@ -74,15 +79,6 @@ impl Plugin for AutoExposurePlugin {
                 Core3d,
                 (Node3d::EndMainPass, node::AutoExposure, Node3d::Tonemapping),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<AutoExposurePipeline>();
-        render_app.init_resource::<AutoExposureResources>();
     }
 }
 

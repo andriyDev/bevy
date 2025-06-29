@@ -7,6 +7,7 @@ use bevy_ecs::{
     resource::Resource,
     schedule::IntoScheduleConfigs,
     system::{Commands, Query, Res, ResMut},
+    world::World,
 };
 use bevy_image::{BevyDefault, Image};
 use bevy_math::{Mat4, Quat};
@@ -25,7 +26,7 @@ use bevy_render::{
     renderer::RenderDevice,
     texture::GpuImage,
     view::{ExtractedView, Msaa, ViewTarget, ViewUniform, ViewUniforms},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_transform::components::Transform;
 use prepass::SkyboxPrepassPipeline;
@@ -53,6 +54,12 @@ impl Plugin for SkyboxPlugin {
             .init_resource::<SpecializedRenderPipelines<SkyboxPipeline>>()
             .init_resource::<SpecializedRenderPipelines<SkyboxPrepassPipeline>>()
             .init_resource::<PreviousViewUniforms>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                let shader = load_embedded_asset!(world, "skybox.wgsl");
+                let render_device = world.resource::<RenderDevice>();
+                world.insert_resource(SkyboxPipeline::new(&render_device, shader));
+                world.init_resource::<SkyboxPrepassPipeline>();
+            })
             .add_systems(
                 Render,
                 (
@@ -63,17 +70,6 @@ impl Plugin for SkyboxPlugin {
                         .in_set(RenderSystems::PrepareBindGroups),
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        let shader = load_embedded_asset!(render_app.world(), "skybox.wgsl");
-        let render_device = render_app.world().resource::<RenderDevice>().clone();
-        render_app
-            .insert_resource(SkyboxPipeline::new(&render_device, shader))
-            .init_resource::<SkyboxPrepassPipeline>();
     }
 }
 

@@ -37,7 +37,7 @@ use bevy_render::{
     renderer::{RenderContext, RenderDevice, RenderQueue},
     texture::GpuImage,
     view::{ExtractedView, ViewTarget},
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_utils::prelude::default;
 
@@ -217,6 +217,9 @@ impl Plugin for PostProcessingPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<PostProcessingPipeline>>()
             .init_resource::<PostProcessingUniformBuffers>()
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<PostProcessingPipeline>();
+            })
             .add_systems(
                 Render,
                 (
@@ -245,13 +248,6 @@ impl Plugin for PostProcessingPlugin {
                 Core2d,
                 (Node2d::Bloom, Node2d::PostProcessing, Node2d::Tonemapping),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app.init_resource::<PostProcessingPipeline>();
     }
 }
 

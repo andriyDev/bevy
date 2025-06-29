@@ -12,7 +12,7 @@ use bevy_render::{
     renderer::RenderDevice,
     texture::{CachedTexture, TextureCache},
     view::ViewTarget,
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 
 use bevy_ecs::query::QueryItem;
@@ -31,18 +31,14 @@ impl Plugin for CopyDeferredLightingIdPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        render_app.add_systems(
-            Render,
-            (prepare_deferred_lighting_id_textures.in_set(RenderSystems::PrepareResources),),
-        );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<CopyDeferredLightingIdPipeline>();
+        render_app
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<CopyDeferredLightingIdPipeline>();
+            })
+            .add_systems(
+                Render,
+                (prepare_deferred_lighting_id_textures.in_set(RenderSystems::PrepareResources),),
+            );
     }
 }
 

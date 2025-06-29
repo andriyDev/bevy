@@ -67,6 +67,8 @@ impl Plugin for CorePipelinePlugin {
             .register_type::<NormalPrepass>()
             .register_type::<MotionVectorPrepass>()
             .register_type::<DeferredPrepass>()
+            // We init the fullscreen shader in the main world (not just the render world), so users
+            // may access the shader from either app.
             .init_resource::<FullscreenShader>()
             .add_plugins((Core2dPlugin, Core3dPlugin, CopyDeferredLightingIdPlugin))
             .add_plugins((
@@ -81,9 +83,6 @@ impl Plugin for CorePipelinePlugin {
                 OrderIndependentTransparencyPlugin,
                 MipGenerationPlugin,
             ));
-    }
-
-    fn finish(&self, app: &mut App) {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };

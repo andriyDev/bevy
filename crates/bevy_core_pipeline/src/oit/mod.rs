@@ -14,7 +14,7 @@ use bevy_render::{
     render_resource::{BufferUsages, BufferVec, DynamicUniformBuffer, ShaderType, TextureUsages},
     renderer::{RenderDevice, RenderQueue},
     view::Msaa,
-    Render, RenderApp, RenderSystems,
+    Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy_window::PrimaryWindow;
 use resolve::{
@@ -113,10 +113,14 @@ impl Plugin for OrderIndependentTransparencyPlugin {
             return;
         };
 
-        render_app.add_systems(
-            Render,
-            prepare_oit_buffers.in_set(RenderSystems::PrepareResources),
-        );
+        render_app
+            .add_systems(RenderStartup, |world: &mut World| {
+                world.init_resource::<OitBuffers>();
+            })
+            .add_systems(
+                Render,
+                prepare_oit_buffers.in_set(RenderSystems::PrepareResources),
+            );
 
         render_app
             .add_render_graph_node::<ViewNodeRunner<OitResolveNode>>(Core3d, OitResolvePass)
@@ -128,14 +132,6 @@ impl Plugin for OrderIndependentTransparencyPlugin {
                     Node3d::EndMainPass,
                 ),
             );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-
-        render_app.init_resource::<OitBuffers>();
     }
 }
 

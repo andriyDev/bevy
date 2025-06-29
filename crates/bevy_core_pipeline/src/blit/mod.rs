@@ -7,7 +7,7 @@ use bevy_render::{
         *,
     },
     renderer::RenderDevice,
-    RenderApp,
+    RenderApp, RenderStartup,
 };
 
 use crate::FullscreenShader;
@@ -19,18 +19,15 @@ impl Plugin for BlitPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "blit.wgsl");
 
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.allow_ambiguous_resource::<SpecializedRenderPipelines<BlitPipeline>>();
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        render_app
-            .init_resource::<BlitPipeline>()
-            .init_resource::<SpecializedRenderPipelines<BlitPipeline>>();
+        render_app.init_resource::<SpecializedRenderPipelines<BlitPipeline>>();
+        render_app.allow_ambiguous_resource::<SpecializedRenderPipelines<BlitPipeline>>();
+
+        render_app.add_systems(RenderStartup, |world: &mut World| {
+            world.init_resource::<BlitPipeline>();
+        });
     }
 }
 
