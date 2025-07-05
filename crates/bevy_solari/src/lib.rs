@@ -18,13 +18,15 @@ pub mod prelude {
     pub use crate::scene::RaytracingMesh3d;
 }
 
+use std::marker::PhantomData;
+
 use crate::realtime::SolariLightingPlugin;
 use crate::scene::RaytracingScenePlugin;
 use bevy_app::{App, Plugin};
 use bevy_ecs::{
     resource::Resource,
     schedule::{common_conditions::resource_exists, IntoScheduleConfigs, SystemSet},
-    system::{Commands, Res},
+    world::World,
 };
 use bevy_render::{
     renderer::RenderDevice, settings::WgpuFeatures, ExtractSchedule, Render, RenderStartup,
@@ -43,23 +45,13 @@ pub struct SolariPlugin;
 
 impl Plugin for SolariPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((RaytracingScenePlugin, SolariLightingPlugin))
-            // Note: conditions only run once per schedule run. So even though these conditions
-            // could apply to many systems, they will only be checked once for the entire group.
-            .configure_sets(
-                RenderStartup,
-                SolariSystems
-                    .after(check_solari_has_required_features)
-                    .run_if(resource_exists::<HasSolariRequiredFeatures>),
-            )
-            .configure_sets(
-                ExtractSchedule,
-                SolariSystems.run_if(resource_exists::<HasSolariRequiredFeatures>),
-            )
-            .configure_sets(
-                Render,
-                SolariSystems.run_if(resource_exists::<HasSolariRequiredFeatures>),
-            );
+        app.add_plugins((RaytracingScenePlugin, SolariLightingPlugin));
+        conditional_render_set(
+            app,
+            SolariSystems,
+            HasSolariRequiredFeatures,
+            check_solari_has_required_features,
+        );
     }
 }
 
@@ -82,18 +74,90 @@ pub struct SolariSystems;
 #[derive(Resource)]
 struct HasSolariRequiredFeatures;
 
-/// Check for the Solari required features once in startup, and insert a resource if the features
-/// are enabled.
-///
-/// Now systems can do a cheap check for if the resource exists.
-fn check_solari_has_required_features(mut commands: Commands, render_device: Res<RenderDevice>) {
-    let features = render_device.features();
+fn check_solari_has_required_features(world: &World) -> bool {
+    let features = world.resource::<RenderDevice>().features();
     if !features.contains(SolariPlugin::required_wgpu_features()) {
         warn!(
             "SolariSystems disabled. GPU lacks support for required features: {:?}.",
             SolariPlugin::required_wgpu_features().difference(features)
         );
-        return;
+        return false;
     }
-    commands.insert_resource(HasSolariRequiredFeatures);
+    true
+}
+
+fn conditional_render_set<
+    S: SystemSet + Clone,
+    R: Resource,
+    F: FnOnce(&World) -> bool + Send + Sync + 'static,
+>(
+    app: &mut App,
+    system_set: S,
+    resource: R,
+    condition: F,
+) {
+    #[derive(SystemSet)]
+    struct GenericSystemSet<T: 'static>(PhantomData<fn() -> T>);
+
+    impl<T: 'static> Clone for GenericSystemSet<T> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
+
+    impl<T: 'static> std::hash::Hash for GenericSystemSet<T> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.0.hash(state);
+        }
+    }
+
+    impl<T: 'static> std::fmt::Debug for GenericSystemSet<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_tuple("GenericSystemSet").field(&self.0).finish()
+        }
+    }
+
+    impl<T: 'static> PartialEq for GenericSystemSet<T> {
+        fn eq(&self, _: &Self) -> bool {
+            true
+        }
+    }
+
+    impl<T: 'static> Eq for GenericSystemSet<T> {}
+
+    impl<T: 'static> GenericSystemSet<T> {
+        fn new(_: &T) -> Self {
+            GenericSystemSet(PhantomData)
+        }
+    }
+
+    let mut resource = Some(resource);
+    let mut condition = Some(condition);
+
+    let closure = move |world: &mut World| {
+        let (Some(condition), Some(resource)) = (condition.take(), resource.take()) else {
+            return;
+        };
+        if condition(world) {
+            world.insert_resource(resource);
+        }
+    };
+
+    let closure_system_set = GenericSystemSet::new(&closure);
+
+    app.add_systems(
+        RenderStartup,
+        closure
+            .in_set(closure_system_set)
+            .before(system_set.clone()),
+    )
+    .configure_sets(
+        RenderStartup,
+        system_set.clone().run_if(resource_exists::<R>),
+    )
+    .configure_sets(
+        ExtractSchedule,
+        system_set.clone().run_if(resource_exists::<R>),
+    )
+    .configure_sets(Render, system_set.run_if(resource_exists::<R>));
 }
