@@ -148,6 +148,7 @@ pub fn init_copy_deferred_lighting_id_pipeline(
         ..default()
     });
 
+    println!("init_pipeline");
     commands.insert_resource(CopyDeferredLightingIdPipeline {
         layout,
         pipeline_id,
@@ -167,6 +168,7 @@ fn prepare_deferred_lighting_id_textures(
 ) {
     for (entity, camera) in &views {
         if let Some(physical_target_size) = camera.physical_target_size {
+            println!("prepare_deferred_lighting_id_depth_texture");
             let texture_descriptor = TextureDescriptor {
                 label: Some("deferred_lighting_id_depth_texture_a"),
                 size: physical_target_size.to_extents(),
