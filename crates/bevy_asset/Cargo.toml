@@ -20,6 +20,7 @@ web_asset_cache = []
 asset_processor = []
 watch = []
 trace = []
+zip = ["dep:zip", "dep:self_cell"]
 
 [dependencies]
 bevy_app = { path = "../bevy_app", version = "0.19.0-dev", default-features = false, features = [
@@ -68,6 +69,8 @@ uuid = { version = "1.21.0", default-features = false, features = [
   "serde",
 ] }
 tracing = { version = "0.1", default-features = false }
+self_cell = { version = "1.2", optional = true }
+zip = { version = "8.1", optional = true }
 
 [target.'cfg(not(any(target_os = "windows", target_arch = "wasm32")))'.dependencies]
 async-io = "2.6"

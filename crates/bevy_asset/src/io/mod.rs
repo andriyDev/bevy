@@ -16,6 +16,8 @@ pub mod processor_gated;
 pub mod wasm;
 #[cfg(any(feature = "http", feature = "https"))]
 pub mod web;
+#[cfg(feature = "zip")]
+pub mod zip;
 
 #[cfg(test)]
 pub mod gated;
