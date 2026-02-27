@@ -14,9 +14,14 @@ use bevy::{
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
 };
+use bevy_asset::io::{zip::ZipAssetReader, AssetSourceBuilder, AssetSourceId};
 
 fn main() {
     App::new()
+        .register_asset_source(
+            AssetSourceId::Default,
+            AssetSourceBuilder::new(|| Box::new(ZipAssetReader::new("../assets.zip".into()))),
+        )
         .insert_resource(DefaultOpaqueRendererMethod::deferred())
         .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .add_plugins(DefaultPlugins)
