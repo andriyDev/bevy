@@ -293,3 +293,208 @@ impl LoadingScreenExt for EntityWorldMut<'_> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use bevy_app::App;
+    use bevy_asset_macros::VisitAssetDependencies;
+    use bevy_ecs::{component::Component, entity::Entity, resource::Resource};
+
+    use crate::{
+        io::memory::Dir,
+        loading_screen::{LoadingScreen, LoadingScreenExt, LoadingScreenLoaded},
+        tests::{create_app_with_gate, run_app_until, TestAsset, TrivialLoader},
+        AssetApp, AssetServer, Handle,
+    };
+
+    #[test]
+    fn simple_resource_load_example() {
+        let dir = Dir::default();
+        let (mut app, gate) = create_app_with_gate(dir.clone());
+
+        dir.insert_asset_text(Path::new("1.txt"), "");
+        dir.insert_asset_text(Path::new("2.txt"), "");
+        dir.insert_asset_text(Path::new("3.txt"), "");
+
+        app.init_asset::<TestAsset>()
+            .register_asset_loader(TrivialLoader);
+
+        #[derive(Resource, VisitAssetDependencies)]
+        struct MyResource {
+            #[dependency]
+            asset_1: Handle<TestAsset>,
+            #[dependency]
+            asset_2: Handle<TestAsset>,
+            #[dependency]
+            asset_3: Handle<TestAsset>,
+        }
+
+        let asset_server = app.world().resource::<AssetServer>().clone();
+
+        app.insert_resource(MyResource {
+            asset_1: asset_server.load("1.txt"),
+            asset_2: asset_server.load("2.txt"),
+            asset_3: asset_server.load("3.txt"),
+        });
+
+        let loading_screen = app
+            .world_mut()
+            .spawn(LoadingScreen::default())
+            .wait_for_resource_load::<MyResource>()
+            .id();
+
+        app.update();
+
+        fn get_loading_screen(app: &App, loading_screen: Entity) -> &LoadingScreen {
+            app.world()
+                .entity(loading_screen)
+                .get::<LoadingScreen>()
+                .unwrap()
+        }
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 0);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_none());
+
+        gate.open(Path::new("1.txt"));
+
+        run_app_until(&mut app, |world| {
+            asset_server
+                .is_loaded(&world.resource::<MyResource>().asset_1)
+                .then_some(())
+        });
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 1);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_none());
+
+        gate.open(Path::new("2.txt"));
+        gate.open(Path::new("3.txt"));
+
+        run_app_until(&mut app, |world| {
+            asset_server
+                .are_dependencies_loaded(world.resource::<MyResource>())
+                .then_some(())
+        });
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 3);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_some());
+    }
+
+    #[test]
+    fn simple_component_load_example() {
+        let dir = Dir::default();
+        let (mut app, gate) = create_app_with_gate(dir.clone());
+
+        dir.insert_asset_text(Path::new("1.txt"), "");
+        dir.insert_asset_text(Path::new("2.txt"), "");
+        dir.insert_asset_text(Path::new("3.txt"), "");
+
+        app.init_asset::<TestAsset>()
+            .register_asset_loader(TrivialLoader);
+
+        #[derive(Component, VisitAssetDependencies)]
+        struct MyComponent {
+            #[dependency]
+            asset_1: Handle<TestAsset>,
+            #[dependency]
+            asset_2: Handle<TestAsset>,
+            #[dependency]
+            asset_3: Handle<TestAsset>,
+        }
+
+        let asset_server = app.world().resource::<AssetServer>().clone();
+
+        let load_target = app
+            .world_mut()
+            .spawn(MyComponent {
+                asset_1: asset_server.load("1.txt"),
+                asset_2: asset_server.load("2.txt"),
+                asset_3: asset_server.load("3.txt"),
+            })
+            .id();
+
+        let loading_screen = app
+            .world_mut()
+            .spawn(LoadingScreen::default())
+            .wait_for_component_load::<MyComponent>(load_target)
+            .id();
+
+        app.update();
+
+        fn get_loading_screen(app: &App, loading_screen: Entity) -> &LoadingScreen {
+            app.world()
+                .entity(loading_screen)
+                .get::<LoadingScreen>()
+                .unwrap()
+        }
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 0);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_none());
+
+        gate.open(Path::new("1.txt"));
+
+        run_app_until(&mut app, |world| {
+            asset_server
+                .is_loaded(
+                    &world
+                        .entity(load_target)
+                        .get::<MyComponent>()
+                        .unwrap()
+                        .asset_1,
+                )
+                .then_some(())
+        });
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 1);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_none());
+
+        gate.open(Path::new("2.txt"));
+        gate.open(Path::new("3.txt"));
+
+        run_app_until(&mut app, |world| {
+            asset_server
+                .are_dependencies_loaded(world.entity(load_target).get::<MyComponent>().unwrap())
+                .then_some(())
+        });
+
+        assert_eq!(get_loading_screen(&app, loading_screen).pending(), 3);
+        assert_eq!(get_loading_screen(&app, loading_screen).ready(), 3);
+
+        assert!(app
+            .world()
+            .entity(loading_screen)
+            .get::<LoadingScreenLoaded>()
+            .is_some());
+    }
+}

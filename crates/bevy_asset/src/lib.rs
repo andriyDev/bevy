@@ -951,7 +951,7 @@ mod tests {
         (app, dir)
     }
 
-    fn create_app_with_gate(dir: Dir) -> (App, GateOpener) {
+    pub(crate) fn create_app_with_gate(dir: Dir) -> (App, GateOpener) {
         let mut app = App::new();
         let (gated_memory_reader, gate_opener) = GatedReader::new(MemoryAssetReader { root: dir });
         app.register_asset_source(
@@ -2648,7 +2648,7 @@ mod tests {
 
     /// A loader that immediately returns a [`TestAsset`].
     #[derive(TypePath)]
-    struct TrivialLoader;
+    pub(crate) struct TrivialLoader;
 
     impl AssetLoader for TrivialLoader {
         type Asset = TestAsset;
