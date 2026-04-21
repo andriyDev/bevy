@@ -207,6 +207,9 @@ pub use uuid;
 
 use crate::{
     io::{embedded::EmbeddedAssetRegistry, AssetSourceBuilder, AssetSourceBuilders, AssetSourceId},
+    loading_screen::{
+        on_add_pending_asset_dependencies, poll_loading_screens, poll_pending_asset_dependencies,
+    },
     processor::{AssetProcessor, Process},
 };
 use alloc::{
@@ -418,23 +421,31 @@ impl Plugin for AssetPlugin {
             .init_asset::<LoadedUntypedAsset>()
             .init_asset::<()>()
             .add_message::<UntypedAssetLoadFailedEvent>()
+            .add_observer(on_add_pending_asset_dependencies)
             .configure_sets(
                 PreUpdate,
                 AssetTrackingSystems.after(handle_internal_asset_events),
             )
-            // `handle_internal_asset_events` requires the use of `&mut World`,
-            // and as a result has ambiguous system ordering with all other systems in `PreUpdate`.
-            // This is virtually never a real problem: asset loading is async and so anything that interacts directly with it
-            // needs to be robust to stochastic delays anyways.
             .add_systems(
                 PreUpdate,
                 (
+                    // `handle_internal_asset_events` requires the use of `&mut World`,
+                    // and as a result has ambiguous system ordering with all other systems in `PreUpdate`.
+                    // This is virtually never a real problem: asset loading is async and so anything that interacts directly with it
+                    // needs to be robust to stochastic delays anyways.
                     handle_internal_asset_events.ambiguous_with_all(),
-                    // TODO: Remove the run condition and use `If` once
-                    // https://github.com/bevyengine/bevy/issues/21549 is resolved.
-                    publish_asset_server_diagnostics.run_if(resource_exists::<DiagnosticsStore>),
+                    poll_pending_asset_dependencies,
+                    poll_loading_screens,
                 )
                     .chain(),
+            )
+            .add_systems(
+                PreUpdate,
+                // TODO: Remove the run condition and use `If` once
+                // https://github.com/bevyengine/bevy/issues/21549 is resolved.
+                publish_asset_server_diagnostics
+                    .after(handle_internal_asset_events)
+                    .run_if(resource_exists::<DiagnosticsStore>),
             )
             .register_diagnostic(Diagnostic::new(AssetServer::STARTED_LOAD_COUNT));
     }

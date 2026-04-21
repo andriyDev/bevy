@@ -1,12 +1,17 @@
+use alloc::{vec, vec::Vec};
 use core::cmp::Ordering;
 
 use bevy_ecs::{
     component::Component,
     entity::Entity,
+    lifecycle::Add,
+    observer::On,
     query::Without,
-    system::{Commands, Query},
+    system::{Commands, Query, Res},
 };
 use tracing::warn;
+
+use crate::{AssetServer, UntypedAssetId, VisitAssetDependencies};
 
 /// A basic "loading screen" that waits until all pending tasks have been completed.
 ///
@@ -95,6 +100,79 @@ pub fn poll_loading_screens(
                 warn!("Loading screen for entity {entity:?} has more ready tasks than pending tasks! Some tasks may not have registered themselves. Marking as loaded anyway...");
                 commands.entity(entity).insert(LoadingScreenLoaded);
             }
+        }
+    }
+}
+
+/// Relationship indicating that an entity intends to be a "blocker" for the loading screen.
+///
+/// This also performs automatically cleanup of this entity if the loading screen is despawned.
+#[derive(Component)]
+#[relationship(relationship_target = BlockedOn)]
+pub struct BlockLoadingScreen(pub Entity);
+
+/// Relationship target tracking all the entities blocking this loading screen.
+///
+/// Despawning the loading screen will despawn all these related entities.
+#[derive(Component)]
+#[relationship_target(relationship = BlockLoadingScreen, linked_spawn)]
+pub struct BlockedOn(Vec<Entity>);
+
+/// A component that blocks a loading screen on a list of asset IDs.
+#[derive(Component)]
+pub struct PendingAssetDependencies(Vec<UntypedAssetId>);
+
+impl PendingAssetDependencies {
+    /// Creates a new instance from the dependencies of `value`.
+    pub fn from_value(value: &impl VisitAssetDependencies) -> Self {
+        let mut ids = vec![];
+        value.visit_dependencies(&mut |asset_ids| {
+            ids.push(asset_ids);
+        });
+        Self(ids)
+    }
+}
+
+/// Observer that adds the pending asset IDs as tasks to the associated [`LoadingScreen`].
+pub(crate) fn on_add_pending_asset_dependencies(
+    event: On<Add, PendingAssetDependencies>,
+    dependencies: Query<(&PendingAssetDependencies, &BlockLoadingScreen)>,
+    mut loading_screen: Query<&mut LoadingScreen>,
+) {
+    let Ok((dependencies, loading_screen_entity)) = dependencies.get(event.entity) else {
+        warn!("Added PendingAssetDependencies to entity {} without BlockLoadingScreen component. This configuration is not supported", event.entity);
+        return;
+    };
+
+    let Ok(mut loading_screen) = loading_screen.get_mut(loading_screen_entity.0) else {
+        warn!("BlockLoadingScreen component on entity {} references an entity {} without a LoadingScreen component.", event.entity, loading_screen_entity.0);
+        return;
+    };
+    loading_screen.add_pending(dependencies.0.len());
+}
+
+/// A system that polls [`PendingAssetDependencies`] and updates the corresponding [`LoadingScreen`]
+/// as those dependencies are loaded.
+pub fn poll_pending_asset_dependencies(
+    mut pending_assets: Query<(&mut PendingAssetDependencies, &BlockLoadingScreen)>,
+    mut loading_screens: Query<&mut LoadingScreen>,
+    asset_server: Res<AssetServer>,
+) {
+    for (mut pending_assets, loading_screen_entity) in pending_assets.iter_mut() {
+        let Ok(mut loading_screen) = loading_screens.get_mut(loading_screen_entity.0) else {
+            continue;
+        };
+        let before = pending_assets.0.len();
+        pending_assets.0.retain(|id| {
+            if !asset_server.is_loaded_with_dependencies(*id) {
+                return true;
+            }
+
+            false
+        });
+        let after = pending_assets.0.len();
+        if before != after {
+            loading_screen.mark_ready(before - after);
         }
     }
 }
