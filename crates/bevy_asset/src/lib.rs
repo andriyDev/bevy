@@ -151,6 +151,7 @@ extern crate std;
 extern crate self as bevy_asset;
 
 pub mod io;
+pub mod loading_screen;
 pub mod meta;
 pub mod processor;
 pub mod saver;
