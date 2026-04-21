@@ -1,5 +1,5 @@
 use alloc::{vec, vec::Vec};
-use core::cmp::Ordering;
+use core::{any::type_name, cmp::Ordering};
 
 use bevy_ecs::{
     component::Component,
@@ -7,7 +7,9 @@ use bevy_ecs::{
     lifecycle::Add,
     observer::On,
     query::Without,
-    system::{Commands, Query, Res},
+    resource::Resource,
+    system::{Commands, EntityCommands, Query, Res},
+    world::EntityWorldMut,
 };
 use tracing::warn;
 
@@ -174,5 +176,120 @@ pub fn poll_pending_asset_dependencies(
         if before != after {
             loading_screen.mark_ready(before - after);
         }
+    }
+}
+
+/// Extension trait to allow conveniently adding pieces to block on for a [`LoadingScreen`].
+pub trait LoadingScreenExt {
+    /// Adds a new instance of [`PendingAssetDependencies`] based on resource `R`, that will block
+    /// the currently referenced [`LoadingScreen`].
+    ///
+    /// This is intended to be called on the [`LoadingScreen`] entity. In addition, the resource
+    /// should already exist, before this runs.
+    fn wait_for_resource_load<R: Resource + VisitAssetDependencies>(&mut self) -> &mut Self;
+
+    /// Adds a new instance of [`PendingAssetDependencies`] based on component `C` on `entity`, that
+    /// will block the currently referenced [`LoadingScreen`].
+    ///
+    /// This is intended to be called on the [`LoadingScreen`] entity. In addition, the component
+    /// should already exist, before this runs.
+    fn wait_for_component_load<C: Component + VisitAssetDependencies>(
+        &mut self,
+        entity: Entity,
+    ) -> &mut Self;
+}
+
+impl LoadingScreenExt for EntityCommands<'_> {
+    fn wait_for_resource_load<R: Resource + VisitAssetDependencies>(&mut self) -> &mut Self {
+        self.queue(move |entity: EntityWorldMut| {
+            debug_assert!(entity.get::<LoadingScreen>().is_some());
+
+            let loading_screen_id = entity.id();
+            let world = entity.into_world_mut();
+            let Some(res) = world.get_resource::<R>() else {
+                warn!(
+                    "Attempted to block the loading screen {loading_screen_id} on the resource {}, but the world does not contain this resource.",
+                    type_name::<R>()
+                );
+                return;
+            };
+            let dependencies = PendingAssetDependencies::from_value(res);
+
+            world.spawn((dependencies, BlockLoadingScreen(loading_screen_id)));
+        })
+    }
+
+    fn wait_for_component_load<C: Component + VisitAssetDependencies>(
+        &mut self,
+        entity: Entity,
+    ) -> &mut Self {
+        self.queue(move |loading_screen_entity: EntityWorldMut| {
+            debug_assert!(loading_screen_entity.get::<LoadingScreen>().is_some());
+
+            let loading_screen_id = loading_screen_entity.id();
+            let world = loading_screen_entity.into_world_mut();
+            let entity = match world.get_entity(entity) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    warn!("Attempted to block the loading screen {loading_screen_id} on a component on entity {entity}, but the entity does not exist: {err}");
+                    return;
+                }
+            };
+            let Some(component) = entity.get::<C>() else {
+                warn!("Attempted to block the loading screen {loading_screen_id} on component {} on entity {}, but the entity does not contain this component.", type_name::<C>(), entity.id());
+                return;
+            };
+            let dependencies = PendingAssetDependencies::from_value(component);
+
+            world.spawn((dependencies, BlockLoadingScreen(loading_screen_id)));
+        })
+    }
+}
+
+impl LoadingScreenExt for EntityWorldMut<'_> {
+    fn wait_for_resource_load<R: Resource + VisitAssetDependencies>(&mut self) -> &mut Self {
+        debug_assert!(self.get::<LoadingScreen>().is_some());
+
+        let loading_screen_id = self.id();
+        let world = self.world();
+        let Some(res) = world.get_resource::<R>() else {
+            warn!(
+                    "Attempted to block the loading screen {loading_screen_id} on the resource {}, but the world does not contain this resource.",
+                    type_name::<R>()
+                );
+            return self;
+        };
+        let dependencies = PendingAssetDependencies::from_value(res);
+
+        self.world_scope(move |world| {
+            world.spawn((dependencies, BlockLoadingScreen(loading_screen_id)));
+        });
+        self
+    }
+
+    fn wait_for_component_load<C: Component + VisitAssetDependencies>(
+        &mut self,
+        entity: Entity,
+    ) -> &mut Self {
+        debug_assert!(self.get::<LoadingScreen>().is_some());
+
+        let loading_screen_id = self.id();
+        let entity = match self.world().get_entity(entity) {
+            Ok(entity) => entity,
+            Err(err) => {
+                warn!("Attempted to block the loading screen {loading_screen_id} on a component on entity {entity}, but the entity does not exist: {err}");
+                return self;
+            }
+        };
+        let Some(component) = entity.get::<C>() else {
+            warn!("Attempted to block the loading screen {loading_screen_id} on component {} on entity {}, but the entity does not contain this component.", type_name::<C>(), entity.id());
+            return self;
+        };
+        let dependencies = PendingAssetDependencies::from_value(component);
+
+        self.world_scope(move |world| {
+            world.spawn((dependencies, BlockLoadingScreen(loading_screen_id)));
+        });
+        self
     }
 }
