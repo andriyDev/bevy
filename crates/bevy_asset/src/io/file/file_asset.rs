@@ -1,15 +1,14 @@
 use crate::io::{
-    get_meta_path, AssetReader, AssetReaderError, AssetWriter, AssetWriterError, PathStream,
-    Reader, ReaderNotSeekableError, SeekableReader, Writer,
+    get_meta_path, AssetReader, AssetReaderError, AssetWriter, AssetWriterError, Reader,
+    ReaderNotSeekableError, SeekableReader, SourceMetaInfo, Writer,
 };
-use async_fs::{read_dir, File};
+use async_fs::File;
 #[cfg(not(target_os = "windows"))]
 use async_io::Timer;
 #[cfg(not(target_os = "windows"))]
 use async_lock::{Semaphore, SemaphoreGuard};
-use futures_lite::StreamExt;
 
-use alloc::{borrow::ToOwned, boxed::Box};
+use alloc::boxed::Box;
 #[cfg(target_os = "windows")]
 use core::marker::PhantomData;
 #[cfg(not(target_os = "windows"))]
@@ -72,6 +71,10 @@ impl<'a> Reader for GuardedFile<'a> {
 }
 
 impl AssetReader for FileAssetReader {
+    async fn read_meta_info(&self) -> Result<SourceMetaInfo, AssetReaderError> {
+        todo!()
+    }
+
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         #[cfg(not(target_os = "windows"))]
         let _guard = maybe_get_semaphore().await;
@@ -93,81 +96,6 @@ impl AssetReader for FileAssetReader {
                 #[cfg(target_os = "windows")]
                 _lifetime: PhantomData,
             })
-    }
-
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        #[cfg(not(target_os = "windows"))]
-        let _guard = maybe_get_semaphore().await;
-
-        let meta_path = get_meta_path(path);
-        let full_path = self.root_path.join(meta_path);
-        File::open(&full_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    AssetReaderError::NotFound(full_path)
-                } else {
-                    e.into()
-                }
-            })
-            .map(|file| GuardedFile {
-                file,
-                #[cfg(not(target_os = "windows"))]
-                _guard,
-                #[cfg(target_os = "windows")]
-                _lifetime: PhantomData,
-            })
-    }
-
-    async fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> Result<Box<PathStream>, AssetReaderError> {
-        let full_path = self.root_path.join(path);
-        match read_dir(&full_path).await {
-            Ok(read_dir) => {
-                let root_path = self.root_path.clone();
-                let mapped_stream = read_dir.filter_map(move |f| {
-                    f.ok().and_then(|dir_entry| {
-                        let path = dir_entry.path();
-                        // filter out meta files as they are not considered assets
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str())
-                            && ext.eq_ignore_ascii_case("meta")
-                        {
-                            return None;
-                        }
-                        // filter out hidden files. they are not listed by default but are directly targetable
-                        if path
-                            .file_name()
-                            .and_then(|file_name| file_name.to_str())
-                            .map(|file_name| file_name.starts_with('.'))
-                            .unwrap_or_default()
-                        {
-                            return None;
-                        }
-                        let relative_path = path.strip_prefix(&root_path).unwrap();
-                        Some(relative_path.to_owned())
-                    })
-                });
-                let read_dir: Box<PathStream> = Box::new(mapped_stream);
-                Ok(read_dir)
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Err(AssetReaderError::NotFound(full_path))
-                } else {
-                    Err(e.into())
-                }
-            }
-        }
-    }
-
-    async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
-        let full_path = self.root_path.join(path);
-        let metadata = full_path
-            .metadata()
-            .map_err(|_e| AssetReaderError::NotFound(path.to_owned()))?;
-        Ok(metadata.file_type().is_dir())
     }
 }
 

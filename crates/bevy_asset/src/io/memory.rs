@@ -1,6 +1,6 @@
 use crate::io::{
-    AssetReader, AssetReaderError, AssetWriter, AssetWriterError, PathStream, Reader,
-    ReaderNotSeekableError, SeekableReader,
+    AssetReader, AssetReaderError, AssetWriter, AssetWriterError, Reader, ReaderNotSeekableError,
+    SeekableReader, SourceMetaInfo,
 };
 use alloc::{borrow::ToOwned, boxed::Box, sync::Arc, vec, vec::Vec};
 use bevy_platform::{
@@ -284,7 +284,7 @@ pub struct Data {
 /// Stores either an allocated vec of bytes or a static array of bytes.
 #[derive(Clone, Debug)]
 pub enum Value {
-    Vec(Arc<Vec<u8>>),
+    Owned(Arc<[u8]>),
     Static(&'static [u8]),
 }
 
@@ -297,7 +297,7 @@ impl Data {
     /// The value in bytes that was written here.
     pub fn value(&self) -> &[u8] {
         match &self.value {
-            Value::Vec(vec) => vec,
+            Value::Owned(value) => value,
             Value::Static(value) => value,
         }
     }
@@ -305,7 +305,7 @@ impl Data {
 
 impl From<Vec<u8>> for Value {
     fn from(value: Vec<u8>) -> Self {
-        Self::Vec(Arc::new(value))
+        Self::Owned(value.into())
     }
 }
 
@@ -372,6 +372,24 @@ impl Reader for DataReader {
 }
 
 impl AssetReader for MemoryAssetReader {
+    async fn read_meta_info(&self) -> Result<SourceMetaInfo, AssetReaderError> {
+        fn recurse(dir: &Dir, result: &mut SourceMetaInfo) {
+            let dir = dir.0.read().unwrap_or_else(PoisonError::into_inner);
+            for (component, data) in dir.assets.iter() {
+                result.paths.push(data.path.clone());
+                let meta_as_bytes = dir.metadata.get(component).map(|meta| meta.value());
+            }
+
+            for subdir in dir.dirs.values() {
+                recurse(subdir, result);
+            }
+        }
+
+        let mut result = SourceMetaInfo::default();
+        recurse(&self.root, &mut result);
+        Ok(result)
+    }
+
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         self.root
             .get_asset(path)
@@ -380,33 +398,6 @@ impl AssetReader for MemoryAssetReader {
                 bytes_read: 0,
             })
             .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
-    }
-
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        self.root
-            .get_metadata(path)
-            .map(|data| DataReader {
-                data,
-                bytes_read: 0,
-            })
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
-    }
-
-    async fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> Result<Box<PathStream>, AssetReaderError> {
-        self.root
-            .get_dir(path)
-            .map(|dir| {
-                let stream: Box<PathStream> = Box::new(DirStream::new(dir));
-                stream
-            })
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
-    }
-
-    async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
-        Ok(self.root.get_dir(path).is_some())
     }
 }
 

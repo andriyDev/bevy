@@ -1,4 +1,4 @@
-use crate::io::{AssetReader, AssetReaderError, PathStream, Reader};
+use crate::io::{AssetReader, AssetReaderError, Reader};
 use alloc::{boxed::Box, sync::Arc};
 use async_channel::{Receiver, Sender};
 use bevy_platform::{collections::HashMap, sync::RwLock};
@@ -55,6 +55,10 @@ impl<R: AssetReader> GatedReader<R> {
 }
 
 impl<R: AssetReader> AssetReader for GatedReader<R> {
+    async fn read_meta_info(&self) -> Result<super::SourceMetaInfo, AssetReaderError> {
+        self.reader.read_meta_info().await
+    }
+
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let receiver = {
             let mut gates = self.gates.write().unwrap_or_else(PoisonError::into_inner);
@@ -66,20 +70,5 @@ impl<R: AssetReader> AssetReader for GatedReader<R> {
         receiver.recv().await.unwrap();
         let result = self.reader.read(path).await?;
         Ok(result)
-    }
-
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        self.reader.read_meta(path).await
-    }
-
-    async fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> Result<Box<PathStream>, AssetReaderError> {
-        self.reader.read_directory(path).await
-    }
-
-    async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
-        self.reader.is_directory(path).await
     }
 }

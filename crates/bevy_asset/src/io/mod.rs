@@ -22,6 +22,7 @@ pub mod gated;
 
 mod source;
 
+use bevy_platform::collections::HashMap;
 pub use futures_lite::AsyncWriteExt;
 pub use source::*;
 
@@ -87,6 +88,8 @@ impl From<std::io::Error> for AssetReaderError {
 pub const STACK_FUTURE_SIZE: usize = 10 * size_of::<&()>();
 
 pub use stackfuture::StackFuture;
+
+use crate::meta::AssetMetaDyn;
 
 /// A type returned from [`AssetReader::read`], which is used to read the contents of a file
 /// (or virtual file) corresponding to an asset.
@@ -188,6 +191,10 @@ where
 ///
 /// For a complementary version of this trait that can write assets to storage, see [`AssetWriter`].
 pub trait AssetReader: Send + Sync + 'static {
+    /// Reads the meta info for this asset source.
+    fn read_meta_info(
+        &self,
+    ) -> impl ConditionalSendFuture<Output = Result<SourceMetaInfo, AssetReaderError>>;
     /// Returns a future to load the full file data at the provided path.
     ///
     /// # Note for implementors
@@ -210,65 +217,24 @@ pub trait AssetReader: Send + Sync + 'static {
     /// }
     /// ```
     fn read<'a>(&'a self, path: &'a Path) -> impl AssetReaderFuture<Value: Reader + 'a>;
-    /// Returns a future to load the full file data at the provided path.
-    fn read_meta<'a>(&'a self, path: &'a Path) -> impl AssetReaderFuture<Value: Reader + 'a>;
-    /// Returns an iterator of directory entry names at the provided path.
-    fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> impl ConditionalSendFuture<Output = Result<Box<PathStream>, AssetReaderError>>;
-    /// Returns true if the provided path points to a directory.
-    fn is_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> impl ConditionalSendFuture<Output = Result<bool, AssetReaderError>>;
-    /// Reads asset metadata bytes at the given `path` into a [`Vec<u8>`]. This is a convenience
-    /// function that wraps [`AssetReader::read_meta`] by default.
-    fn read_meta_bytes<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> impl ConditionalSendFuture<Output = Result<Vec<u8>, AssetReaderError>> {
-        async {
-            let mut meta_reader = self.read_meta(path).await?;
-            let mut meta_bytes = Vec::new();
-            meta_reader.read_to_end(&mut meta_bytes).await?;
-            Ok(meta_bytes)
-        }
-    }
 }
 
 /// Equivalent to an [`AssetReader`] but using boxed futures, necessary eg. when using a `dyn AssetReader`,
 /// as [`AssetReader`] isn't currently object safe.
 pub trait ErasedAssetReader: Send + Sync + 'static {
+    /// Reads the meta info for this asset source.
+    fn read_meta_info<'a>(&'a self) -> BoxedFuture<'a, Result<SourceMetaInfo, AssetReaderError>>;
     /// Returns a future to load the full file data at the provided path.
     fn read<'a>(
         &'a self,
         path: &'a Path,
     ) -> BoxedFuture<'a, Result<Box<dyn Reader + 'a>, AssetReaderError>>;
-    /// Returns a future to load the full file data at the provided path.
-    fn read_meta<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Box<dyn Reader + 'a>, AssetReaderError>>;
-    /// Returns an iterator of directory entry names at the provided path.
-    fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Box<PathStream>, AssetReaderError>>;
-    /// Returns true if the provided path points to a directory.
-    fn is_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<bool, AssetReaderError>>;
-    /// Reads asset metadata bytes at the given `path` into a [`Vec<u8>`]. This is a convenience
-    /// function that wraps [`ErasedAssetReader::read_meta`] by default.
-    fn read_meta_bytes<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Vec<u8>, AssetReaderError>>;
 }
 
 impl<T: AssetReader> ErasedAssetReader for T {
+    fn read_meta_info<'a>(&'a self) -> BoxedFuture<'a, Result<SourceMetaInfo, AssetReaderError>> {
+        Box::pin(Self::read_meta_info(self))
+    }
     fn read<'a>(
         &'a self,
         path: &'a Path,
@@ -277,33 +243,6 @@ impl<T: AssetReader> ErasedAssetReader for T {
             let reader = Self::read(self, path).await?;
             Ok(Box::new(reader) as Box<dyn Reader>)
         })
-    }
-    fn read_meta<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Box<dyn Reader + 'a>, AssetReaderError>> {
-        Box::pin(async {
-            let reader = Self::read_meta(self, path).await?;
-            Ok(Box::new(reader) as Box<dyn Reader>)
-        })
-    }
-    fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Box<PathStream>, AssetReaderError>> {
-        Box::pin(Self::read_directory(self, path))
-    }
-    fn is_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<bool, AssetReaderError>> {
-        Box::pin(Self::is_directory(self, path))
-    }
-    fn read_meta_bytes<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> BoxedFuture<'a, Result<Vec<u8>, AssetReaderError>> {
-        Box::pin(Self::read_meta_bytes(self, path))
     }
 }
 
@@ -552,6 +491,12 @@ impl<T: AssetWriter> ErasedAssetWriter for T {
     ) -> BoxedFuture<'a, Result<(), AssetWriterError>> {
         Box::pin(Self::write_meta_bytes(self, path, bytes))
     }
+}
+
+#[derive(Default)]
+pub struct SourceMetaInfo {
+    pub paths: Vec<PathBuf>,
+    pub path_to_meta_bytes: HashMap<PathBuf, Arc<[u8]>>,
 }
 
 /// An "asset source change event" that occurs whenever asset (or asset metadata) is created/added/removed

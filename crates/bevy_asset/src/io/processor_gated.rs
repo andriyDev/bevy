@@ -1,7 +1,7 @@
 use crate::{
     io::{
-        AssetReader, AssetReaderError, AssetSourceId, PathStream, Reader, ReaderNotSeekableError,
-        SeekableReader,
+        AssetReader, AssetReaderError, AssetSourceId, Reader, ReaderNotSeekableError,
+        SeekableReader, SourceMetaInfo,
     },
     processor::{ProcessStatus, ProcessingState},
     AssetPath,
@@ -41,6 +41,10 @@ impl ProcessorGatedReader {
 }
 
 impl AssetReader for ProcessorGatedReader {
+    async fn read_meta_info(&self) -> Result<SourceMetaInfo, AssetReaderError> {
+        self.reader.read_meta_info().await
+    }
+
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let asset_path = AssetPath::from(path.to_path_buf()).with_source(self.source.clone());
         trace!("Waiting for processing to finish before reading {asset_path}");
@@ -62,54 +66,6 @@ impl AssetReader for ProcessorGatedReader {
         let asset_reader = self.reader.read(path).await?;
         let reader = TransactionLockedReader::new(asset_reader, lock);
         Ok(reader)
-    }
-
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        let asset_path = AssetPath::from(path.to_path_buf()).with_source(self.source.clone());
-        trace!("Waiting for processing to finish before reading meta for {asset_path}",);
-        let process_result = self
-            .processing_state
-            .wait_until_processed(asset_path.clone())
-            .await;
-        match process_result {
-            ProcessStatus::Processed => {}
-            ProcessStatus::Failed | ProcessStatus::NonExistent => {
-                return Err(AssetReaderError::NotFound(path.to_owned()));
-            }
-        }
-        trace!("Processing finished with {process_result:?}, reading meta for {asset_path}",);
-        let lock = self
-            .processing_state
-            .get_transaction_lock(&asset_path)
-            .await?;
-        let meta_reader = self.reader.read_meta(path).await?;
-        let reader = TransactionLockedReader::new(meta_reader, lock);
-        Ok(reader)
-    }
-
-    async fn read_directory<'a>(
-        &'a self,
-        path: &'a Path,
-    ) -> Result<Box<PathStream>, AssetReaderError> {
-        trace!(
-            "Waiting for processing to finish before reading directory {:?}",
-            path
-        );
-        self.processing_state.wait_until_finished().await;
-        trace!("Processing finished, reading directory {:?}", path);
-        let result = self.reader.read_directory(path).await?;
-        Ok(result)
-    }
-
-    async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
-        trace!(
-            "Waiting for processing to finish before reading directory {:?}",
-            path
-        );
-        self.processing_state.wait_until_finished().await;
-        trace!("Processing finished, getting directory status {:?}", path);
-        let result = self.reader.is_directory(path).await?;
-        Ok(result)
     }
 }
 
