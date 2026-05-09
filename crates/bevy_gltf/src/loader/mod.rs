@@ -36,10 +36,10 @@ use bevy_mesh::{
 };
 use bevy_platform::collections::{HashMap, HashSet};
 use bevy_reflect::TypePath;
+use bevy_scene::{bsn, WorldSceneExt};
 #[cfg(not(target_arch = "wasm32"))]
 use bevy_tasks::IoTaskPool;
 use bevy_transform::components::Transform;
-use bevy_world_serialization::WorldAsset;
 use gltf::{
     accessor::Iter,
     image::Source,
@@ -1019,24 +1019,43 @@ impl GltfLoader {
         let mut active_camera_found = false;
         for scene in gltf.scenes() {
             let mut err = None;
-            let mut world = World::default();
             let mut node_index_to_entity_map = <HashMap<_, _>>::default();
             let mut entity_to_skin_index_map = EntityHashMap::default();
             let mut scene_load_context = load_context.begin_labeled_asset();
 
             let world_root_transform = convert_coordinates.scene_conversion_transform();
 
+            let mut scene = bsn!(
+                {world_root_transform}
+                Visibility::default()
+                Name::new({
+                    scene
+                        .name()
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| format!("Scene{}", scene.index())),
+                })
+            );
+
+            if let Some(scene_name) = scene.name() {
+                scene = bsn! {
+                    {scene}
+                    GltfSceneName({scene_name.to_owned()})
+                };
+            };
+
+            if let Some(extras) = scene.extras().as_ref() {
+                let extras = GltfSceneExtras {
+                    value: extras.get().to_string(),
+                };
+
+                scene = bsn! {
+                    {scene}
+                    {extras}
+                };
+            }
+
             let world_root_id = world
-                .spawn((
-                    world_root_transform,
-                    Visibility::default(),
-                    Name::new(
-                        scene
-                            .name()
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| format!("Scene{}", scene.index())),
-                    ),
-                ))
+                .spawn((world_root_transform, Visibility::default(), Name::new()))
                 .with_children(|parent| {
                     for node in scene.nodes() {
                         let result = load_node(
@@ -1119,7 +1138,7 @@ impl GltfLoader {
                 );
             }
 
-            let loaded_scene = scene_load_context.finish(WorldAsset::new(world));
+            let loaded_scene = scene_load_context.finish();
             let scene_handle = load_context.add_loaded_labeled_asset(
                 GltfAssetLabel::Scene(scene.index()).to_string(),
                 loaded_scene,
@@ -2119,7 +2138,7 @@ mod test {
     use bevy_mesh::skinning::SkinnedMeshInverseBindposes;
     use bevy_mesh::MeshPlugin;
     use bevy_reflect::TypePath;
-    use bevy_world_serialization::WorldSerializationPlugin;
+    use bevy_scene::ScenePlugin;
 
     fn test_app(dir: Dir) -> App {
         let mut app = App::new();
@@ -2132,7 +2151,7 @@ mod test {
             LogPlugin::default(),
             TaskPoolPlugin::default(),
             AssetPlugin::default(),
-            WorldSerializationPlugin,
+            ScenePlugin,
             MeshPlugin,
             crate::GltfPlugin::default(),
         ));
@@ -2559,7 +2578,7 @@ mod test {
             LogPlugin::default(),
             TaskPoolPlugin::default(),
             AssetPlugin::default(),
-            WorldSerializationPlugin,
+            ScenePlugin,
             MeshPlugin,
             crate::GltfPlugin::default(),
         ));
