@@ -4,8 +4,8 @@ mod loaders;
 use crate::{
     folder::LoadedFolder,
     io::{
-        AssetReaderError, AssetSource, AssetSourceEvent, AssetSourceId, AssetSources,
-        AssetWriterError, ErasedAssetReader, MissingAssetSourceError, MissingAssetWriterError,
+        AssetReaderError, AssetSourceEvent, AssetSourceId, AssetSources, AssetWriterError,
+        ErasedAssetReader, MissingAssetSourceError, MissingAssetWriterError,
         MissingProcessedAssetReaderError, Reader,
     },
     loader::{AssetLoader, ErasedAssetLoader, LoadContext, LoadedAsset},
@@ -29,17 +29,17 @@ use atomicow::CowArc;
 use bevy_diagnostic::{DiagnosticPath, Diagnostics};
 use bevy_ecs::prelude::*;
 use bevy_platform::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 use bevy_tasks::IoTaskPool;
+use bevy_utils::TypeIdMap;
 use core::{
-    any::{type_name, TypeId},
+    any::{type_name, Any, TypeId},
     future::Future,
     panic::AssertUnwindSafe,
     task::Poll,
 };
-use crossbeam_channel::{Receiver, Sender};
 use futures_lite::{FutureExt, StreamExt};
 use info::*;
 use loaders::*;
@@ -64,19 +64,133 @@ use tracing::{error, info, warn};
 /// [`AssetApp::init_asset_loader`]: crate::AssetApp::init_asset_loader
 #[derive(Resource, Clone)]
 pub struct AssetServer {
-    pub(crate) data: Arc<AssetServerData>,
+    data: Arc<RwLock<AssetServerData>>,
+}
+
+impl AssetServer {
+    /// Begins loading an [`Asset`] of type `A` stored at `path`. This will not block on the asset load. Instead,
+    /// it returns a "strong" [`Handle`]. When the [`Asset`] is loaded (and enters [`LoadState::Loaded`]), it will be added to the
+    /// associated [`Assets`] resource.
+    ///
+    /// Note that if the asset at this path is already loaded, this function will return the existing handle,
+    /// and will not waste work spawning a new load task.
+    ///
+    /// In case the file path contains a hashtag (`#`), the `path` must be specified using [`Path`]
+    /// or [`AssetPath`] because otherwise the hashtag would be interpreted as separator between
+    /// the file path and the label. For example:
+    ///
+    /// ```no_run
+    /// # use bevy_asset::{AssetServer, Handle, LoadedUntypedAsset};
+    /// # use bevy_ecs::prelude::Res;
+    /// # use std::path::Path;
+    /// // `#path` is a label.
+    /// # fn setup(asset_server: Res<AssetServer>) {
+    /// # let handle: Handle<LoadedUntypedAsset> =
+    /// asset_server.load("some/file#path");
+    ///
+    /// // `#path` is part of the file name.
+    /// # let handle: Handle<LoadedUntypedAsset> =
+    /// asset_server.load(Path::new("some/file#path"));
+    /// # }
+    /// ```
+    ///
+    /// Furthermore, if you need to load a file with a hashtag in its name _and_ a label, you can
+    /// manually construct an [`AssetPath`].
+    ///
+    /// ```no_run
+    /// # use bevy_asset::{AssetPath, AssetServer, Handle, LoadedUntypedAsset};
+    /// # use bevy_ecs::prelude::Res;
+    /// # use std::path::Path;
+    /// # fn setup(asset_server: Res<AssetServer>) {
+    /// # let handle: Handle<LoadedUntypedAsset> =
+    /// asset_server.load(AssetPath::from_path(Path::new("some/file#path")).with_label("subasset"));
+    /// # }
+    /// ```
+    ///
+    /// You can check the asset's load state by reading [`AssetEvent`] events, calling [`AssetServer::load_state`], or checking
+    /// the [`Assets`] storage to see if the [`Asset`] exists yet.
+    ///
+    /// The asset load will fail and an error will be printed to the logs if the asset stored at `path` is not of type `A`.
+    #[must_use = "not using the returned strong handle may result in the unexpected release of the asset"]
+    pub fn load<'a, A: Asset>(&self, path: impl Into<AssetPath<'a>>) -> Handle<A> {
+        let path = path.into();
+        let mut inner = self.write();
+        let Some(source) = inner
+            .source_id_to_source
+            // TODO: Allow lookup without clone_owned()
+            .get_mut(&path.source().clone_owned())
+        else {
+            // TODO: Log an error.
+            return Handle::default();
+        };
+        match source
+            .load_erased(
+                path.path_cow(),
+                path.label_cow(),
+                TypeId::of::<A>(),
+                Some(type_name::<A>()),
+            )
+            .try_typed()
+        {
+            Ok(handle) => handle,
+            Err(_err) => {
+                // TODO: Log an error.
+                Handle::default()
+            }
+        }
+    }
+
+    fn write(&self) -> RwLockWriteGuard<'_, AssetServerData> {
+        self.data.write().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Internal data used by [`AssetServer`]. This is intended to be used from within an [`Arc`].
 pub(crate) struct AssetServerData {
-    pub(crate) infos: RwLock<AssetInfos>,
-    pub(crate) loaders: Arc<RwLock<AssetLoaders>>,
-    asset_event_sender: Sender<InternalAssetEvent>,
-    asset_event_receiver: Receiver<InternalAssetEvent>,
-    sources: Arc<AssetSources>,
-    mode: AssetServerMode,
-    meta_check: AssetMetaCheck,
-    unapproved_path_mode: UnapprovedPathMode,
+    source_id_to_source: HashMap<AssetSourceId<'static>, Box<dyn AssetSource>>,
+    type_registry: AssetSourceTypeRegistry,
+}
+
+pub trait AssetSource: Any + Send + Sync + 'static {
+    /// Returns the handle associated with the given path and label for the given type.
+    ///
+    /// `asset_name` is provided for error messages, and may not be present for "dynamic" loads.
+    fn load_erased(
+        &mut self,
+        path: CowArc<'_, Path>,
+        label: Option<CowArc<'_, str>>,
+        asset_type: TypeId,
+        asset_name: Option<&'static str>,
+    ) -> UntypedHandle;
+}
+
+// We **could** replace this with bevy_reflect's type registry. However this **locks us in** to
+// requiring reflect. In the future, we may make reflection optional, but this piece of the asset
+// server is not optional. This also allows us to avoid a second RwLock to access the global type
+// registry.
+struct AssetSourceTypeRegistry {
+    type_id_to_type_data: TypeIdMap<TypeIdMap<Box<dyn Any + Send + Sync + 'static>>>,
+}
+
+impl AssetSourceTypeRegistry {
+    fn register_type_data<T: Any + Send + Sync + 'static>(
+        &mut self,
+        type_id: TypeId,
+        type_data: T,
+    ) {
+        self.type_id_to_type_data
+            .entry(type_id)
+            .or_default()
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(type_data));
+    }
+
+    fn get_type_data<T: Any + Send + Sync + 'static>(&self, type_id: TypeId) -> Option<&T> {
+        self.type_id_to_type_data
+            .get(&type_id)?
+            .get(&TypeId::of::<T>())?
+            .downcast_ref()
+    }
 }
 
 /// The "asset mode" the server is currently in.
@@ -315,54 +429,6 @@ impl AssetServer {
     ) -> Result<Arc<dyn ErasedAssetLoader>, MissingAssetLoaderForTypeIdError> {
         self.get_asset_loader_with_asset_type_id(TypeId::of::<A>())
             .await
-    }
-
-    /// Begins loading an [`Asset`] of type `A` stored at `path`. This will not block on the asset load. Instead,
-    /// it returns a "strong" [`Handle`]. When the [`Asset`] is loaded (and enters [`LoadState::Loaded`]), it will be added to the
-    /// associated [`Assets`] resource.
-    ///
-    /// Note that if the asset at this path is already loaded, this function will return the existing handle,
-    /// and will not waste work spawning a new load task.
-    ///
-    /// In case the file path contains a hashtag (`#`), the `path` must be specified using [`Path`]
-    /// or [`AssetPath`] because otherwise the hashtag would be interpreted as separator between
-    /// the file path and the label. For example:
-    ///
-    /// ```no_run
-    /// # use bevy_asset::{AssetServer, Handle, LoadedUntypedAsset};
-    /// # use bevy_ecs::prelude::Res;
-    /// # use std::path::Path;
-    /// // `#path` is a label.
-    /// # fn setup(asset_server: Res<AssetServer>) {
-    /// # let handle: Handle<LoadedUntypedAsset> =
-    /// asset_server.load("some/file#path");
-    ///
-    /// // `#path` is part of the file name.
-    /// # let handle: Handle<LoadedUntypedAsset> =
-    /// asset_server.load(Path::new("some/file#path"));
-    /// # }
-    /// ```
-    ///
-    /// Furthermore, if you need to load a file with a hashtag in its name _and_ a label, you can
-    /// manually construct an [`AssetPath`].
-    ///
-    /// ```no_run
-    /// # use bevy_asset::{AssetPath, AssetServer, Handle, LoadedUntypedAsset};
-    /// # use bevy_ecs::prelude::Res;
-    /// # use std::path::Path;
-    /// # fn setup(asset_server: Res<AssetServer>) {
-    /// # let handle: Handle<LoadedUntypedAsset> =
-    /// asset_server.load(AssetPath::from_path(Path::new("some/file#path")).with_label("subasset"));
-    /// # }
-    /// ```
-    ///
-    /// You can check the asset's load state by reading [`AssetEvent`] events, calling [`AssetServer::load_state`], or checking
-    /// the [`Assets`] storage to see if the [`Asset`] exists yet.
-    ///
-    /// The asset load will fail and an error will be printed to the logs if the asset stored at `path` is not of type `A`.
-    #[must_use = "not using the returned strong handle may result in the unexpected release of the asset"]
-    pub fn load<'a, A: Asset>(&self, path: impl Into<AssetPath<'a>>) -> Handle<A> {
-        self.load_builder().load(path.into())
     }
 
     /// Returns a [`LoadBuilder`] that can be used to start more complex loads. See [`LoadBuilder`]

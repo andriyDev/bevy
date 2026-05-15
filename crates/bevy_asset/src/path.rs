@@ -268,6 +268,12 @@ impl<'a> AssetPath<'a> {
         self.path.deref()
     }
 
+    /// Gets the path to the asset in the "virtual filesystem".
+    #[inline]
+    pub fn path_cow(&self) -> CowArc<'a, Path> {
+        self.path.clone()
+    }
+
     /// Gets the path to the asset in the "virtual filesystem" without a label (if a label is currently set).
     #[inline]
     pub fn without_label(&self) -> AssetPath<'_> {
