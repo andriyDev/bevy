@@ -193,6 +193,12 @@ impl AssetSourceTypeRegistry {
     }
 }
 
+pub trait AdvancedLoad {}
+
+pub struct ToAdvancedLoadDyn {
+    load: fn(&mut dyn AssetSource) -> Option<Handle>,
+}
+
 /// The "asset mode" the server is currently in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssetServerMode {
