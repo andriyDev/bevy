@@ -156,7 +156,8 @@ pub struct FixedLast;
 /// The schedule that contains systems which only run after a fixed period of time has elapsed.
 ///
 /// This is run by the [`RunFixedMainLoop`] schedule. If you need to order your variable timestep systems
-/// before or after the fixed update logic, use the [`RunFixedMainLoopSystems`] system set.
+/// before or after the fixed update logic, add the systems to [`RunFixedMainLoop`] and then add
+/// before/after the `run_fixed_main_schedule` system.
 ///
 /// Frequency of execution is configured by inserting `Time<Fixed>` resource, 64 Hz by default.
 /// See [this example](https://github.com/bevyengine/bevy/blob/latest/examples/time/time.rs).
