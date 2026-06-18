@@ -6,7 +6,7 @@ use bevy_ecs::{
     prelude::*,
     schedule::{
         InternedScheduleLabel, InternedSystemSet, ScheduleBuildSettings, ScheduleCleanupPolicy,
-        ScheduleError, ScheduleLabel,
+        ScheduleError, ScheduleLabel, SystemLocation,
     },
     system::{ScheduleSystem, SystemId, SystemInput},
 };
@@ -223,11 +223,11 @@ impl SubApp {
     /// See [`App::add_systems`].
     pub fn add_systems<M>(
         &mut self,
-        schedule: impl ScheduleLabel,
+        location: impl SystemLocation,
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
     ) -> &mut Self {
         let mut schedules = self.world.resource_mut::<Schedules>();
-        schedules.add_systems(schedule, systems);
+        schedules.add_systems(location, systems);
 
         self
     }

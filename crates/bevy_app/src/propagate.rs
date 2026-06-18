@@ -343,7 +343,7 @@ pub fn propagate_output<C: Component + Clone + PartialEq, F: QueryFilter>(
 mod tests {
     use bevy_ecs::schedule::Schedule;
 
-    use crate::{App, Update};
+    use crate::{App, Main};
 
     use super::*;
 
@@ -353,8 +353,8 @@ mod tests {
     #[test]
     fn test_simple_propagate() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -381,8 +381,8 @@ mod tests {
     #[test]
     fn test_remove_propagate() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -410,8 +410,8 @@ mod tests {
     #[test]
     fn test_remove_and_reinsert_propagate() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let parent = app.world_mut().spawn(Propagate(TestValue(1))).id();
         let child = app.world_mut().spawn_empty().insert(ChildOf(parent)).id();
@@ -436,8 +436,8 @@ mod tests {
     #[test]
     fn test_remove_orphan() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -464,8 +464,8 @@ mod tests {
     #[test]
     fn test_reparented() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -494,8 +494,8 @@ mod tests {
     #[test]
     fn test_reparented_with_prior() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -523,8 +523,8 @@ mod tests {
     #[test]
     fn test_detach_and_reattach_propagates_to_descendants() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -562,8 +562,8 @@ mod tests {
     #[test]
     fn test_propagate_over() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -588,8 +588,8 @@ mod tests {
     #[test]
     fn test_remove_propagate_over() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -638,8 +638,8 @@ mod tests {
     #[test]
     fn test_propagate_over_parent_removed() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -670,8 +670,8 @@ mod tests {
     #[test]
     fn test_orphaned_propagate_over() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -707,8 +707,8 @@ mod tests {
     #[test]
     fn test_propagate_stop() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -733,8 +733,8 @@ mod tests {
     #[test]
     fn test_remove_propagate_stop() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -770,8 +770,8 @@ mod tests {
     #[test]
     fn test_intermediate_override() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -813,9 +813,9 @@ mod tests {
         struct Marker;
 
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
+        app.add_schedule(Schedule::new(Main));
         app.add_plugins(HierarchyPropagatePlugin::<TestValue, With<Marker>>::new(
-            Update,
+            Main,
         ));
 
         let mut query = app.world_mut().query::<&TestValue>();
@@ -869,8 +869,8 @@ mod tests {
     #[test]
     fn test_removed_propagate_still_inherits() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
@@ -903,8 +903,8 @@ mod tests {
     #[test]
     fn test_reparent_respects_stop() {
         let mut app = App::new();
-        app.add_schedule(Schedule::new(Update));
-        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Update));
+        app.add_schedule(Schedule::new(Main));
+        app.add_plugins(HierarchyPropagatePlugin::<TestValue>::new(Main));
 
         let mut query = app.world_mut().query::<&TestValue>();
 
