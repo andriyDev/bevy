@@ -367,6 +367,16 @@ impl<T: ScheduleLabel> SystemLocation for T {
     }
 }
 
+// Implementation for a tuple of the location. This allows calling
+// `SystemLocation::get_system_location` and then using that returned value as a system location.
+impl SystemLocation for (Interned<dyn ScheduleLabel>, Option<Interned<dyn SystemSet>>) {
+    fn get_system_location(
+        &self,
+    ) -> (Interned<dyn ScheduleLabel>, Option<Interned<dyn SystemSet>>) {
+        self.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{

@@ -14,7 +14,7 @@ use bevy_ecs::{
     observer::On,
     query::{Changed, Has, Or, QueryFilter, With, Without},
     relationship::{Relationship, RelationshipTarget},
-    schedule::{IntoScheduleConfigs, ScheduleLabel, SystemSet},
+    schedule::{IntoScheduleConfigs, ScheduleLabel, SystemLocation, SystemSet},
     system::{Commands, Local, Query},
 };
 #[cfg(feature = "bevy_reflect")]
@@ -45,7 +45,7 @@ pub struct HierarchyPropagatePlugin<
     F: QueryFilter = (),
     R: Relationship = ChildOf,
 > {
-    schedule: Interned<dyn ScheduleLabel>,
+    location: (Interned<dyn ScheduleLabel>, Option<Interned<dyn SystemSet>>),
     _marker: PhantomData<fn() -> (C, F, R)>,
 }
 
@@ -53,9 +53,9 @@ impl<C: Component + Clone + PartialEq, F: QueryFilter, R: Relationship>
     HierarchyPropagatePlugin<C, F, R>
 {
     /// Construct the plugin. The propagation systems will be placed in the specified schedule.
-    pub fn new(schedule: impl ScheduleLabel) -> Self {
+    pub fn new(location: impl SystemLocation) -> Self {
         Self {
-            schedule: schedule.intern(),
+            location: location.get_system_location(),
             _marker: PhantomData,
         }
     }
@@ -151,7 +151,7 @@ impl<C: Component + Clone + PartialEq, F: QueryFilter + 'static, R: Relationship
 {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            self.schedule,
+            self.location,
             (
                 update_source::<C, F, R>,
                 update_removed_limit::<C, F, R>,
