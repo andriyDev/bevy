@@ -478,7 +478,7 @@ pub enum ExtractAppDataError {
 ///
 /// This is public to allow other test modules in this crate to use its utilities.
 pub mod tests {
-    use bevy_app::{App, Update};
+    use bevy_app::{App, Main, Update};
     use bevy_ecs::{
         component::Component,
         query::{With, Without},
@@ -860,7 +860,7 @@ pub mod tests {
     fn linear_with_system_sets() {
         let mut app = App::empty();
 
-        app.configure_sets(Update, (MySet::<0>, MySet::<1>, MySet::<2>).chain());
+        app.configure_sets(Main, (MySet::<0>, MySet::<1>, MySet::<2>).chain());
 
         let data = app_data_from_app(&mut app).unwrap();
         // SubApps start with the First schedule by default.
@@ -897,8 +897,8 @@ pub mod tests {
         fn a() {}
 
         app.add_systems(Update, a.in_set(MySet::<0>))
-            .configure_sets(Update, MySet::<0>.in_set(MySet::<1>))
-            .configure_sets(Update, MySet::<1>.in_set(MySet::<2>));
+            .configure_sets(Main, MySet::<0>.in_set(MySet::<1>))
+            .configure_sets(Main, MySet::<1>.in_set(MySet::<2>));
 
         let data = app_data_from_app(&mut app).unwrap();
         // SubApps start with the First schedule by default.

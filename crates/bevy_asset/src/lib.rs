@@ -213,7 +213,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use bevy_app::{App, Plugin, PostUpdate, PreUpdate};
+use bevy_app::{App, Main, Plugin, PostUpdate, PreUpdate};
 use bevy_ecs::{prelude::Component, schedule::common_conditions::resource_exists};
 use bevy_ecs::{
     reflect::AppTypeRegistry,
@@ -418,7 +418,7 @@ impl Plugin for AssetPlugin {
             .init_asset::<()>()
             .add_message::<UntypedAssetLoadFailedEvent>()
             .configure_sets(
-                PreUpdate,
+                Main,
                 AssetTrackingSystems.after(handle_internal_asset_events),
             )
             // `handle_internal_asset_events` requires the use of `&mut World`,
@@ -750,7 +750,7 @@ mod tests {
         vec::Vec,
     };
     use async_channel::{Receiver, Sender};
-    use bevy_app::{App, TaskPoolPlugin, Update};
+    use bevy_app::{App, Main, TaskPoolPlugin, Update};
     use bevy_diagnostic::{DiagnosticsPlugin, DiagnosticsStore};
     use bevy_ecs::{
         message::MessageCursor,
@@ -1971,7 +1971,7 @@ mod tests {
 
         fn uses_assets(_asset: ResMut<Assets<CoolText>>) {}
         app.add_systems(Update, (uses_assets, uses_assets));
-        app.edit_schedule(Update, |s| {
+        app.edit_schedule(Main, |s| {
             s.set_build_settings(ScheduleBuildSettings {
                 ambiguity_detection: LogLevel::Error,
                 ..Default::default()
@@ -1979,7 +1979,7 @@ mod tests {
         });
 
         // running schedule does not error on ambiguity between the 2 uses_assets systems
-        app.world_mut().run_schedule(Update);
+        app.world_mut().run_schedule(Main);
     }
 
     // This test is not checking a requirement, but documenting a current limitation. We simply are

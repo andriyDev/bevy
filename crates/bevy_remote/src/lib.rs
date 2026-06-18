@@ -829,18 +829,14 @@ impl Plugin for RemotePlugin {
                 .add_observer(cache_schedule_build_metadata);
         }
 
-        app.init_schedule(RemoteLast)
-            .world_mut()
-            .resource_mut::<MainScheduleOrder>()
-            .insert_after(Last, RemoteLast);
-
         app.insert_resource(remote_methods)
             .init_resource::<schemas::SchemaTypesMetadata>()
             .init_resource::<RemoteWatchingRequests>()
             .init_resource::<builtin_methods::BrpEventObservers>()
             .add_systems(PreStartup, setup_mailbox_channel)
+            .configure_sets(Main, RemoteLast.after(Last))
             .configure_sets(
-                RemoteLast,
+                Main,
                 (RemoteSystems::ProcessRequests, RemoteSystems::Cleanup).chain(),
             )
             .add_systems(
@@ -907,7 +903,8 @@ impl Plugin for RemotePlugin {
 }
 
 /// Schedule that contains all systems to process Bevy Remote Protocol requests
-#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[default_schedule(Main)]
 pub struct RemoteLast;
 
 /// The systems sets of the [`RemoteLast`] schedule.

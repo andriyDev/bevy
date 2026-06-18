@@ -151,7 +151,7 @@ impl Plugin for WindowPlugin {
             app.add_systems(Last, close_when_requested.before(ExitSystems));
         }
 
-        app.configure_sets(Last, OnAppExitSystems.after(ExitSystems));
+        app.configure_sets(Main, OnAppExitSystems.after(ExitSystems));
     }
 }
 
