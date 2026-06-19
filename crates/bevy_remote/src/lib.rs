@@ -535,7 +535,7 @@
 extern crate alloc;
 
 use async_channel::{Receiver, Sender};
-use bevy_app::{prelude::*, MainScheduleOrder};
+use bevy_app::prelude::*;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
     entity::Entity,
@@ -550,7 +550,7 @@ use bevy_ecs::{
 };
 use bevy_platform::collections::HashMap;
 #[cfg(feature = "bevy_render")]
-use bevy_render::{Render, RenderApp, RenderScheduleOrder, RenderStartup};
+use bevy_render::{Render, RenderApp, RenderStartup};
 use bevy_utils::prelude::default;
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::Value;
@@ -852,6 +852,7 @@ impl Plugin for RemotePlugin {
         #[cfg(feature = "bevy_render")]
         {
             use bevy_ecs::schedule::common_conditions::run_once;
+            use bevy_render::RenderSystems;
 
             let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
                 return;
@@ -875,19 +876,19 @@ impl Plugin for RemotePlugin {
             }
 
             render_app
-                .init_schedule(RemoteLast)
-                .world_mut()
-                .resource_mut::<RenderScheduleOrder>()
-                .insert_after(Render, RemoteLast);
-
-            render_app
                 .insert_resource(render_remote_methods)
                 .init_resource::<schemas::SchemaTypesMetadata>()
                 .init_resource::<RemoteWatchingRequests>()
                 .add_systems(RenderStartup, setup_mailbox_channel.run_if(run_once))
                 .configure_sets(
-                    RemoteLast,
-                    (RemoteSystems::ProcessRequests, RemoteSystems::Cleanup).chain(),
+                    Render,
+                    (
+                        RenderSystems::PostCleanup,
+                        // Run RemoteSystems stuff after all the rendering stuff.
+                        RemoteSystems::ProcessRequests,
+                        RemoteSystems::Cleanup,
+                    )
+                        .chain(),
                 )
                 .add_systems(
                     RemoteLast,
