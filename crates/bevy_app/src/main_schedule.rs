@@ -15,8 +15,8 @@ use bevy_ecs::{
 ///        if `MyState` was added to the app with `MyState::Foo` as the initial state,
 ///        as well as [`OnEnter(MyComputedState)`] if it `compute`s to `Some(Self)` in `MyState::Foo`.
 ///      * If you want to run systems before any state transitions, regardless of which state is the starting state,
-///        for example, for registering required components, you can add your own custom startup schedule
-///        before [`StateTransition`]. See [`MainScheduleOrder::insert_startup_before`] for more details.
+///        for example, for registering required components, you can just add a system
+///        `.before(run_state_transition_schedule)` in [`StartupMain`].
 /// * [`PreStartup`]
 /// * [`Startup`]
 /// * [`PostStartup`]

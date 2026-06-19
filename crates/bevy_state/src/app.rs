@@ -329,7 +329,7 @@ impl AppExtStates for App {
     }
 }
 
-/// Registers the [`StateTransition`] schedule in the [`MainScheduleOrder`] to enable state processing.
+/// Registers the [`StateTransition`] schedule in the [`Main`] schedule to enable state processing.
 #[derive(Default)]
 pub struct StatesPlugin;
 
