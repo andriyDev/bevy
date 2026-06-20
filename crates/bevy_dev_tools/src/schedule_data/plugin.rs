@@ -1,7 +1,7 @@
 //! Convenience plugin for automatically performing serialization of schedules on boot.
 use std::{fs::File, io::Write, path::PathBuf};
 
-use bevy_app::{App, Main, Plugin};
+use bevy_app::{App, EntryPoint, Plugin};
 use bevy_ecs::{
     error::{BevyError, ResultSeverityExt, Severity},
     intern::Interned,
@@ -41,7 +41,7 @@ pub struct SerializeSchedulesPlugin {
 impl Default for SerializeSchedulesPlugin {
     fn default() -> Self {
         Self {
-            schedule: Main.intern(),
+            schedule: EntryPoint.intern(),
         }
     }
 }
@@ -63,9 +63,9 @@ impl Plugin for SerializeSchedulesPlugin {
                 collect_system_data
                     .run_if(run_once)
                     .in_set(SerializeSchedulesSystems)
-                    // While we may not be in the `Main` schedule at all, the default is that, so we
+                    // While we may not be in the `EntryPoint` schedule at all, the default is that, so we
                     // should make this work properly in the default case.
-                    .before(Main::run_main),
+                    .before(EntryPoint::run_main),
             );
     }
 }
