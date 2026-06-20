@@ -255,6 +255,10 @@ impl Plugin for MainSchedulePlugin {
                     FixedLast,
                 )
                     .chain(),
+            )
+            .add_systems(
+                Main,
+                run_spawn_scene_schedule.after(Update).before(PostUpdate),
             );
 
         #[cfg(feature = "bevy_debug_stepping")]
@@ -264,6 +268,11 @@ impl Plugin for MainSchedulePlugin {
             app.add_systems(Main, Stepping::begin_frame.before(Main::run_main));
         }
     }
+}
+
+/// System to run the [`SpawnScene`] schedule.
+pub fn run_spawn_scene_schedule(world: &mut World) {
+    let _ = world.try_run_schedule(SpawnScene);
 }
 
 /// A System set that runs all systems needed to render the transform gizmo to the screen, used in the `bevy_gizmos_render` crate
