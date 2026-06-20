@@ -135,7 +135,7 @@ fn collect_system_data(world: &mut World) -> Result<(), BevyError> {
 
 #[cfg(test)]
 mod tests {
-    use bevy_app::{App, PostUpdate, Update};
+    use bevy_app::{App, Main, SpawnScene};
 
     use crate::schedule_data::{
         plugin::collect_system_data_inner,
@@ -152,8 +152,8 @@ mod tests {
         fn a() {}
         fn b() {}
         fn c() {}
-        app.add_systems(Update, (a, b));
-        app.add_systems(PostUpdate, c);
+        app.add_systems(Main, (a, b));
+        app.add_systems(SpawnScene, c);
 
         // Normally users would use the plugin, but to avoid writing to disk in a test, we just call
         // the inner part of the system directly.
@@ -164,12 +164,12 @@ mod tests {
         assert_eq!(app_data.schedules.len(), 3);
         let first = &app_data.schedules[0];
         validate_message_update_system(first);
-        let post_update = &app_data.schedules[1];
-        assert_eq!(post_update.name, "PostUpdate");
-        assert_eq!(post_update.systems, [simple_system("c")]);
-        let update = &app_data.schedules[2];
-        assert_eq!(update.name, "Update");
-        assert_eq!(update.systems, [simple_system("a"), simple_system("b")]);
+        let main = &app_data.schedules[1];
+        assert_eq!(main.name, "Main");
+        assert_eq!(main.systems, [simple_system("a"), simple_system("b")]);
+        let spawn_scene = &app_data.schedules[2];
+        assert_eq!(spawn_scene.name, "SpawnScene");
+        assert_eq!(spawn_scene.systems, [simple_system("c")]);
     }
 
     #[test]
@@ -184,8 +184,8 @@ mod tests {
         let mut app = App::empty();
 
         fn a() {}
-        app.add_systems(Update, a);
-        app.world_mut().run_schedule(Update);
+        app.add_systems(Main, a);
+        app.world_mut().run_schedule(Main);
 
         // Normally users would use the plugin, but to avoid writing to disk in a test, we just call
         // the inner part of the system directly.
@@ -195,6 +195,6 @@ mod tests {
 
         // If the schedule is missing, this would panic! This could happen if there was an error
         // extracting the schedule data, and we didn't hokey-pokey safely.
-        app.world_mut().schedule_scope(Update, |_, _| {});
+        app.world_mut().schedule_scope(Main, |_, _| {});
     }
 }

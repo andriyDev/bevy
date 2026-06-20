@@ -478,7 +478,7 @@ pub enum ExtractAppDataError {
 ///
 /// This is public to allow other test modules in this crate to use its utilities.
 pub mod tests {
-    use bevy_app::{App, Main, Update};
+    use bevy_app::{App, Main};
     use bevy_ecs::{
         component::Component,
         query::{With, Without},
@@ -813,7 +813,7 @@ pub mod tests {
         fn b() {}
         fn c() {}
 
-        app.add_systems(Update, (a, b, c).chain());
+        app.add_systems(Main, (a, b, c).chain());
 
         let data = app_data_from_app(&mut app).unwrap();
         // SubApps start with the First schedule by default.
@@ -821,7 +821,7 @@ pub mod tests {
         validate_message_update_system(&data.schedules[0]);
 
         let update = &data.schedules[1];
-        assert_eq!(update.name, "Update");
+        assert_eq!(update.name, "Main");
         assert_eq!(
             update.systems,
             [simple_system("a"), simple_system("b"), simple_system("c"),]
@@ -867,7 +867,7 @@ pub mod tests {
         assert_eq!(data.schedules.len(), 2);
         validate_message_update_system(&data.schedules[0]);
         let update = &data.schedules[1];
-        assert_eq!(update.name, "Update");
+        assert_eq!(update.name, "Main");
         assert_eq!(update.systems, []);
         assert_eq!(
             update.system_sets,
@@ -896,7 +896,7 @@ pub mod tests {
 
         fn a() {}
 
-        app.add_systems(Update, a.in_set(MySet::<0>))
+        app.add_systems(Main, a.in_set(MySet::<0>))
             .configure_sets(Main, MySet::<0>.in_set(MySet::<1>))
             .configure_sets(Main, MySet::<1>.in_set(MySet::<2>));
 
@@ -905,7 +905,7 @@ pub mod tests {
         assert_eq!(data.schedules.len(), 2);
         validate_message_update_system(&data.schedules[0]);
         let update = &data.schedules[1];
-        assert_eq!(update.name, "Update");
+        assert_eq!(update.name, "Main");
         assert_eq!(update.systems, [simple_system("a")]);
         assert_eq!(
             update.system_sets,
@@ -942,14 +942,14 @@ pub mod tests {
         fn c0() {}
         fn c1() {}
 
-        app.add_systems(Update, (((a0, a1), (b0, b1)).chain(), (c0, c1).chain()));
+        app.add_systems(Main, (((a0, a1), (b0, b1)).chain(), (c0, c1).chain()));
 
         let data = app_data_from_app(&mut app).unwrap();
         // SubApps start with the First schedule by default.
         assert_eq!(data.schedules.len(), 2);
         validate_message_update_system(&data.schedules[0]);
         let update = &data.schedules[1];
-        assert_eq!(update.name, "Update");
+        assert_eq!(update.name, "Main");
         assert_eq!(
             update.systems,
             [
@@ -1063,14 +1063,14 @@ pub mod tests {
         fn e0(_: Query<&mut MyComponent<9>>) {}
         fn e1(_: Query<&mut MyComponent<9>>) {}
 
-        app.add_systems(Update, (a0, a1, b0, b1, c0, c1, d0, d1, (e0, e1).chain()));
+        app.add_systems(Main, (a0, a1, b0, b1, c0, c1, d0, d1, (e0, e1).chain()));
 
         let data = app_data_from_app(&mut app).unwrap();
         // SubApps start with the First schedule by default.
         assert_eq!(data.schedules.len(), 2);
         validate_message_update_system(&data.schedules[0]);
         let update = &data.schedules[1];
-        assert_eq!(update.name, "Update");
+        assert_eq!(update.name, "Main");
         assert_eq!(
             update.components,
             [
