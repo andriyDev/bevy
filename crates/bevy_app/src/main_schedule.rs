@@ -1,6 +1,6 @@
 use crate::{App, Plugin};
 use bevy_ecs::{
-    schedule::{IntoScheduleConfigs, ScheduleLabel, SystemSet},
+    schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel, SingleThreadedExecutor, SystemSet},
     system::Local,
     world::World,
 };
@@ -48,6 +48,9 @@ use bevy_ecs::{
 /// [`RenderPlugin`]: https://docs.rs/bevy/latest/bevy/render/struct.RenderPlugin.html
 /// [`PipelinedRenderingPlugin`]: https://docs.rs/bevy/latest/bevy/render/pipelined_rendering/struct.PipelinedRenderingPlugin.html
 /// [`SubApp`]: crate::SubApp
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct EntryPoint;
+
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Main;
 
@@ -218,7 +221,7 @@ pub enum SceneSpawnerSystems {
     SceneSpawn,
 }
 
-impl Main {
+impl EntryPoint {
     /// A system that runs the "main schedule"
     pub fn run_main(world: &mut World, mut run_at_least_once: Local<bool>) {
         if !*run_at_least_once {
@@ -256,6 +259,7 @@ impl Plugin for MainSchedulePlugin {
                 )
                     .chain(),
             )
+            .add_systems(EntryPoint, EntryPoint::run_main)
             .add_systems(
                 Main,
                 run_spawn_scene_schedule.after(Update).before(PostUpdate),
