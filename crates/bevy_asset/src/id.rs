@@ -46,6 +46,13 @@ impl<A: Asset> AssetId<A> {
     pub fn entity(&self) -> Entity {
         self.entity
     }
+
+    /// Converts this to an "untyped" / "generic-less" [`Asset`] identifier that stores the type information
+    /// _inside_ the [`UntypedAssetId`].
+    #[inline]
+    pub fn untyped(self) -> UntypedAssetId {
+        self.into()
+    }
 }
 
 impl<A: Asset> Clone for AssetId<A> {
@@ -121,6 +128,140 @@ impl<A: Asset> Into<Entity> for AssetId<A> {
     #[inline]
     fn into(self) -> Entity {
         self.entity()
+    }
+}
+
+/// An "untyped" / "generic-less" [`Asset`] identifier that behaves much like [`AssetId`], but stores the [`Asset`] type
+/// information at runtime instead of compile-time. This increases the size of the type, but it enables storing asset ids
+/// across asset types together and enables comparisons between them.
+#[derive(Debug, Copy, Clone, Reflect, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UntypedAssetId {
+    /// The entity that holds/will hold the asset data.
+    pub entity: Entity,
+    /// The type of asset that this ID represents.
+    pub type_id: TypeId,
+}
+
+impl UntypedAssetId {
+    /// Converts this to a "typed" [`AssetId`] without checking the stored type to see if it matches the target `A` [`Asset`] type.
+    /// This should only be called if you are _absolutely certain_ the asset type matches the stored type. And even then, you should
+    /// consider using [`UntypedAssetId::typed_debug_checked`] instead.
+    #[inline]
+    pub fn typed_unchecked<A: Asset>(self) -> AssetId<A> {
+        self.entity.into()
+    }
+
+    /// Converts this to a "typed" [`AssetId`]. When compiled in debug-mode it will check to see if the stored type
+    /// matches the target `A` [`Asset`] type. When compiled in release-mode, this check will be skipped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if compiled in debug mode and the [`TypeId`] of `A` does not match the stored [`TypeId`].
+    #[inline]
+    pub fn typed_debug_checked<A: Asset>(self) -> AssetId<A> {
+        debug_assert_eq!(
+            self.type_id,
+            TypeId::of::<A>(),
+            "The target AssetId<{}>'s TypeId does not match the TypeId of this UntypedAssetId",
+            core::any::type_name::<A>()
+        );
+        self.typed_unchecked()
+    }
+
+    /// Converts this to a "typed" [`AssetId`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the [`TypeId`] of `A` does not match the stored type id.
+    #[inline]
+    pub fn typed<A: Asset>(self) -> AssetId<A> {
+        let Ok(id) = self.try_typed() else {
+            panic!(
+                "The target AssetId<{}>'s TypeId does not match the TypeId of this UntypedAssetId",
+                core::any::type_name::<A>()
+            )
+        };
+
+        id
+    }
+
+    /// Try to convert this to a "typed" [`AssetId`].
+    #[inline]
+    pub fn try_typed<A: Asset>(self) -> Result<AssetId<A>, UntypedAssetIdConversionError> {
+        AssetId::try_from(self)
+    }
+}
+
+impl Display for UntypedAssetId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut writer = f.debug_struct("UntypedAssetId");
+        writer.field("entity", &self.entity);
+        writer.field("type_id", &self.type_id);
+        writer.finish()
+    }
+}
+
+// Cross Operations
+
+impl<A: Asset> PartialEq<UntypedAssetId> for AssetId<A> {
+    #[inline]
+    fn eq(&self, other: &UntypedAssetId) -> bool {
+        TypeId::of::<A>() == other.type_id && self.entity.eq(&other.entity)
+    }
+}
+
+impl<A: Asset> PartialEq<AssetId<A>> for UntypedAssetId {
+    #[inline]
+    fn eq(&self, other: &AssetId<A>) -> bool {
+        other.eq(self)
+    }
+}
+
+impl<A: Asset> PartialOrd<UntypedAssetId> for AssetId<A> {
+    #[inline]
+    fn partial_cmp(&self, other: &UntypedAssetId) -> Option<core::cmp::Ordering> {
+        if TypeId::of::<A>() != other.type_id {
+            None
+        } else {
+            Some(self.entity.cmp(&other.entity))
+        }
+    }
+}
+
+impl<A: Asset> PartialOrd<AssetId<A>> for UntypedAssetId {
+    #[inline]
+    fn partial_cmp(&self, other: &AssetId<A>) -> Option<core::cmp::Ordering> {
+        Some(other.partial_cmp(self)?.reverse())
+    }
+}
+
+impl<A: Asset> From<AssetId<A>> for UntypedAssetId {
+    #[inline]
+    fn from(value: AssetId<A>) -> Self {
+        Self {
+            entity: value.entity,
+            type_id: TypeId::of::<A>(),
+        }
+    }
+}
+
+impl<A: Asset> TryFrom<UntypedAssetId> for AssetId<A> {
+    type Error = UntypedAssetIdConversionError;
+
+    #[inline]
+    fn try_from(value: UntypedAssetId) -> Result<Self, Self::Error> {
+        let expected = TypeId::of::<A>();
+
+        if value.type_id != expected {
+            return Err(UntypedAssetIdConversionError::TypeIdMismatch {
+                expected,
+                found: value.type_id,
+            });
+        }
+        Ok(AssetId {
+            entity: value.entity,
+            marker: PhantomData,
+        })
     }
 }
 
