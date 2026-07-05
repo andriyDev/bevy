@@ -1,6 +1,6 @@
 use crate::{
-    meta::MetaTransform, reflect::ReflectHandle, Asset, AssetId, AssetPath, AssetReference,
-    AssetServer,
+    meta::MetaTransform, reflect::ReflectHandle, Asset, AssetId, AssetPath, AssetServer,
+    DirectAssetAccessExt,
 };
 use alloc::sync::Arc;
 use bevy_ecs::{
@@ -214,12 +214,12 @@ impl<T: Asset> Template for HandleTemplate<T> {
     fn build_template(&self, context: &mut TemplateContext) -> bevy_ecs::error::Result<Handle<T>> {
         Ok(match self {
             HandleTemplate::Default => context
-                .resource::<AssetServer>()
-                .load(AssetReference::Default),
+                .entity
+                .world_scope(|world| world.get_default_handle()),
             HandleTemplate::Path(asset_path) => context.resource::<AssetServer>().load(asset_path),
             HandleTemplate::Uuid(uuid) => context
-                .resource::<AssetServer>()
-                .load(AssetReference::Uuid(*uuid)),
+                .entity
+                .world_scope(|world| world.get_uuid_handle(*uuid)),
             HandleTemplate::Handle(handle) => handle.clone(),
             HandleTemplate::Value(value) => {
                 // This unwrap is ok. If another caller panicked while holding this mutex, then the
