@@ -2454,7 +2454,7 @@ pub(crate) fn specialize_shadows(
                     mesh_key,
                     layout: mesh.layout.clone(),
                     properties: material.properties.clone(),
-                    material_type_id: material_instance.asset_id.type_id(),
+                    material_type_id: material_instance.asset_id.type_id,
                 });
             }
         }

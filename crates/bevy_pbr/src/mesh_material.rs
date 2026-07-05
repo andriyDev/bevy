@@ -18,21 +18,21 @@ use derive_more::derive::From;
 /// # use bevy_ecs::prelude::*;
 /// # use bevy_mesh::{Mesh, Mesh3d};
 /// # use bevy_color::palettes::basic::RED;
-/// # use bevy_asset::Assets;
+/// # use bevy_asset::AssetCommands;
 /// # use bevy_math::primitives::Capsule3d;
 /// #
 /// // Spawn an entity with a mesh using `StandardMaterial`.
 /// fn setup(
 ///     mut commands: Commands,
-///     mut meshes: ResMut<Assets<Mesh>>,
-///     mut materials: ResMut<Assets<StandardMaterial>>,
 /// ) {
+///     let mesh = commands.spawn_asset(Mesh::from(Capsule3d::default()));
+///     let material = commands.spawn_asset(StandardMaterial {
+///         base_color: RED.into(),
+///         ..Default::default()
+///     });
 ///     commands.spawn((
-///         Mesh3d(meshes.add(Capsule3d::default())),
-///         MeshMaterial3d(materials.add(StandardMaterial {
-///             base_color: RED.into(),
-///             ..Default::default()
-///         })),
+///         Mesh3d(mesh),
+///         MeshMaterial3d(material),
 ///     ));
 /// }
 /// ```

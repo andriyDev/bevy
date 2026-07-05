@@ -16,6 +16,7 @@ use bevy_core_pipeline::{
 };
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::change_detection::Tick;
+use bevy_ecs::component::Mutable;
 use bevy_ecs::system::SystemParam;
 use bevy_ecs::{
     prelude::*,
@@ -95,7 +96,7 @@ pub const MATERIAL_BIND_GROUP_INDEX: usize = 3;
 /// # use bevy_shader::ShaderRef;
 /// # use bevy_color::LinearRgba;
 /// # use bevy_color::palettes::basic::RED;
-/// # use bevy_asset::{Handle, AssetServer, Assets, Asset};
+/// # use bevy_asset::{Handle, AssetServer, Asset, AssetCommands};
 /// # use bevy_math::primitives::Capsule3d;
 /// #
 /// #[derive(AsBindGroup, Debug, Clone, Asset, TypePath)]
@@ -122,16 +123,16 @@ pub const MATERIAL_BIND_GROUP_INDEX: usize = 3;
 /// // Spawn an entity with a mesh using `CustomMaterial`.
 /// fn setup(
 ///     mut commands: Commands,
-///     mut meshes: ResMut<Assets<Mesh>>,
-///     mut materials: ResMut<Assets<CustomMaterial>>,
 ///     asset_server: Res<AssetServer>
 /// ) {
+///     let mesh = commands.spawn_asset(Mesh::from(Capsule3d::default()));
+///     let material = commands.spawn_asset(CustomMaterial {
+///         color: RED.into(),
+///         color_texture: asset_server.load("some_image.png"),
+///     });
 ///     commands.spawn((
-///         Mesh3d(meshes.add(Capsule3d::default())),
-///         MeshMaterial3d(materials.add(CustomMaterial {
-///             color: RED.into(),
-///             color_texture: asset_server.load("some_image.png"),
-///         })),
+///         Mesh3d(mesh),
+///         MeshMaterial3d(material),
 ///     ));
 /// }
 /// ```
@@ -441,7 +442,7 @@ impl<M: Material> Default for MaterialPlugin<M> {
     }
 }
 
-impl<M: Material> Plugin for MaterialPlugin<M>
+impl<M: Material + Component<Mutability = Mutable>> Plugin for MaterialPlugin<M>
 where
     M::Data: PartialEq + Eq + Hash + Clone,
 {
@@ -1582,7 +1583,7 @@ where
 }
 
 // orphan rules T_T
-impl<M: Material> ErasedRenderAsset for MeshMaterial3d<M>
+impl<M: Material + Component<Mutability = Mutable>> ErasedRenderAsset for MeshMaterial3d<M>
 where
     M::Data: PartialEq + Eq + Hash + Clone,
 {

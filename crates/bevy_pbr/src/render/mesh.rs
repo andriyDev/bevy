@@ -5,7 +5,6 @@ use crate::{
     skin::skin_uniforms_from_world,
 };
 use alloc::sync::Arc;
-use bevy_asset::uuid::Uuid;
 use bevy_asset::{embedded_asset, load_embedded_asset, AssetId, AssetServer};
 use bevy_camera::visibility::NoCpuCulling;
 use bevy_camera::{
@@ -917,7 +916,6 @@ impl_atomic_pod!(
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(C)]
 struct MeshAssetIdFlat {
-    mode: u32,
     words: [u32; 4],
 }
 
@@ -925,32 +923,12 @@ struct MeshAssetIdFlat {
 #[repr(C)]
 struct LightmapSlabIndexFlat(u32);
 
-const MESH_ASSET_ID_FLAT_MODE_INDEX: u32 = 0;
-const MESH_ASSET_ID_FLAT_MODE_UUID: u32 = 1;
-
 impl From<AssetId<Mesh>> for MeshAssetIdFlat {
     #[inline]
     fn from(value: AssetId<Mesh>) -> Self {
-        match value {
-            AssetId::Entity { entity, .. } => {
-                let bits = entity.to_bits();
-                MeshAssetIdFlat {
-                    mode: MESH_ASSET_ID_FLAT_MODE_INDEX,
-                    words: [(bits & 0xffff_ffff) as u32, (bits >> 32) as u32, 0, 0],
-                }
-            }
-            AssetId::Uuid { uuid } => {
-                let (hi, lo) = uuid.as_u64_pair();
-                MeshAssetIdFlat {
-                    mode: MESH_ASSET_ID_FLAT_MODE_UUID,
-                    words: [
-                        (lo & 0xffff_ffff) as u32,
-                        (lo >> 32) as u32,
-                        (hi & 0xffff_ffff) as u32,
-                        (hi >> 32) as u32,
-                    ],
-                }
-            }
+        let bits = value.entity.to_bits();
+        Self {
+            words: [(bits & 0xffff_ffff) as u32, (bits >> 32) as u32, 0, 0],
         }
     }
 }
@@ -958,17 +936,9 @@ impl From<AssetId<Mesh>> for MeshAssetIdFlat {
 impl From<MeshAssetIdFlat> for AssetId<Mesh> {
     #[inline]
     fn from(value: MeshAssetIdFlat) -> AssetId<Mesh> {
-        if value.mode == MESH_ASSET_ID_FLAT_MODE_INDEX {
-            AssetId::from(Entity::from_bits(
-                (value.words[0] as u64) | ((value.words[1] as u64) << 32),
-            ))
-        } else {
-            let lo = (value.words[0] as u64) | ((value.words[1] as u64) << 32);
-            let hi = (value.words[2] as u64) | ((value.words[3] as u64) << 32);
-            AssetId::Uuid {
-                uuid: Uuid::from_u64_pair(hi, lo),
-            }
-        }
+        AssetId::from(Entity::from_bits(
+            (value.words[0] as u64) | ((value.words[1] as u64) << 32),
+        ))
     }
 }
 
