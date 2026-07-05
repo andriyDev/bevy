@@ -3,8 +3,9 @@ use crate::{
     RenderStartup, RenderSystems, Res,
 };
 use bevy_app::{App, Plugin, SubApp};
-use bevy_asset::RenderAssetUsages;
-use bevy_asset::{Asset, AssetEvent, AssetId, Assets, UntypedAssetId};
+use bevy_asset::{Asset, AssetEvent, AssetId, UntypedAssetId};
+use bevy_asset::{DirectAssetAccessExt, RenderAssetUsages};
+use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::{
     prelude::{Commands, IntoScheduleConfigs, Local, MessageReader, ResMut, Resource},
     schedule::{ScheduleConfigs, SystemSet},
@@ -38,7 +39,7 @@ pub struct AssetExtractionSystems;
 /// is transformed into its GPU-representation of type [`ErasedRenderAsset`].
 pub trait ErasedRenderAsset: Send + Sync + 'static {
     /// The representation of the asset in the "main world".
-    type SourceAsset: Asset + Clone;
+    type SourceAsset: Asset + Component<Mutability = Mutable> + Clone;
     /// The target representation of the asset in the "render world".
     type ErasedAsset: Send + Sync + 'static + Sized;
 
@@ -230,10 +231,7 @@ impl<ERA> ErasedRenderAssets<ERA> {
 
 #[derive(Resource)]
 struct CachedExtractErasedRenderAssetSystemState<A: ErasedRenderAsset> {
-    state: SystemState<(
-        MessageReader<'static, 'static, AssetEvent<A::SourceAsset>>,
-        ResMut<'static, Assets<A::SourceAsset>>,
-    )>,
+    state: SystemState<MessageReader<'static, 'static, AssetEvent<A::SourceAsset>>>,
 }
 
 impl<A: ErasedRenderAsset> FromWorld for CachedExtractErasedRenderAssetSystemState<A> {
@@ -257,13 +255,12 @@ fn collect_erased_render_assets_to_reextract<A: ErasedRenderAsset>(
     mut render_assets: ResMut<ErasedRenderAssets<A::ErasedAsset>>,
     mut prepare_next_frame: ResMut<PrepareNextFrameAssets<A>>,
 ) {
-    let source_type_id = core::any::TypeId::of::<A::SourceAsset>();
     // ErasedRenderAssets is shared across all material types that produce
     // the same ErasedAsset type. Drain only the entries matching our SourceAsset.
     let mut ids = Vec::new();
     render_assets.0.retain(|untyped_id, _| {
-        if untyped_id.type_id() == source_type_id {
-            ids.push(untyped_id.typed());
+        if let Ok(id) = untyped_id.try_typed() {
+            ids.push(id);
             false
         } else {
             true
@@ -296,7 +293,7 @@ pub(crate) fn extract_erased_render_asset<A: ErasedRenderAsset>(
 
     main_world.resource_scope(
         |world, mut cached_state: Mut<CachedExtractErasedRenderAssetSystemState<A>>| {
-            let (mut events, mut assets) = cached_state.state.get_mut(world).unwrap();
+            let mut events = cached_state.state.get_mut(world).unwrap();
 
             if let Some(reextract_ids) = reextract_ids {
                 needs_extracting.extend(reextract_ids);
@@ -331,11 +328,11 @@ pub(crate) fn extract_erased_render_asset<A: ErasedRenderAsset>(
             }
 
             for id in needs_extracting.drain() {
-                if let Some(asset) = assets.get(id) {
+                if let Some(asset) = world.get_asset(id) {
                     let asset_usage = A::asset_usage(asset);
                     if asset_usage.contains(RenderAssetUsages::RENDER_WORLD) {
                         if asset_usage == RenderAssetUsages::RENDER_WORLD {
-                            if let Some(asset) = assets.remove(id) {
+                            if let Some(asset) = world.entity_mut(id.entity).take() {
                                 extracted_assets.extracted.push((id, asset));
                                 extracted_assets.added.insert(id);
                             }
