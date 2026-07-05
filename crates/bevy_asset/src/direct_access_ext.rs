@@ -129,6 +129,8 @@ impl DirectAssetAccessExt for World {
 
 pub trait AssetCommands {
     fn spawn_asset<A: Asset>(&mut self, asset: A) -> Handle<A>;
+
+    fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A>;
 }
 
 impl<'w, 's> AssetCommands for Commands<'w, 's> {
@@ -140,6 +142,18 @@ impl<'w, 's> AssetCommands for Commands<'w, 's> {
         let weak = entity_handle.weak();
         self.queue(move |world: &mut World| {
             world.spawn_at(entity, (asset, weak)).unwrap();
+        });
+        entity_handle.into()
+    }
+
+    fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A> {
+        let entity_handle = self
+            .entity_allocator()
+            .alloc_handle_with_data(AssetData::new::<A>());
+        let entity = entity_handle.0.entity;
+        let weak = entity_handle.weak();
+        self.queue(move |world: &mut World| {
+            world.spawn_at(entity, weak).unwrap();
         });
         entity_handle.into()
     }
