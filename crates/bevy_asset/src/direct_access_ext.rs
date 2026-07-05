@@ -9,8 +9,9 @@ use bevy_ecs::{
 use uuid::Uuid;
 
 use crate::{
-    handle_map::AssetUuids, meta::Settings, Asset, AssetData, AssetId, AssetReference, AssetServer,
-    Handle, LoadBuilder,
+    handle_map::{AssetUuids, DefaultAssets},
+    meta::Settings,
+    Asset, AssetData, AssetId, AssetReference, AssetServer, Handle, LoadBuilder,
 };
 
 /// An extension trait for methods for working with assets directly from a [`World`].
@@ -23,6 +24,10 @@ pub trait DirectAssetAccessExt {
     fn spawn_asset<A: Asset>(&mut self, asset: A) -> Handle<A>;
     /// Insert an asset similarly to [`Assets::add`].
     fn insert_uuid_asset<A: Asset>(&mut self, uuid: Uuid, asset: A) -> Handle<A>;
+    /// Inserts an asset that can be accessed through [`HandleTemplate::default`].
+    ///
+    /// [`HandleTemplate::default`]: crate::HandleTemplate::default
+    fn insert_default_asset<A: Asset>(&mut self, asset: A) -> Handle<A>;
 
     /// Reserves an asset handle of type `A`.
     fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A>;
@@ -30,6 +35,10 @@ pub trait DirectAssetAccessExt {
     ///
     /// If the UUID asset has not been inserted, a new (empty) asset will be created.
     fn get_uuid_handle<A: Asset>(&mut self, uuid: Uuid) -> Handle<A>;
+    /// Gets the handle for a default asset.
+    ///
+    /// If the default asset has not been inserted, a new (empty) asset will be created.
+    fn get_default_handle<A: Asset>(&mut self) -> Handle<A>;
 
     /// Gets an asset from its [`AssetId`].
     ///
@@ -79,6 +88,10 @@ impl DirectAssetAccessExt for World {
         AssetUuids::insert_uuid_asset(self, uuid, asset)
     }
 
+    fn insert_default_asset<A: Asset>(&mut self, asset: A) -> Handle<A> {
+        DefaultAssets::insert_asset(self, asset)
+    }
+
     fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A> {
         self.spawn_empty()
             .handle_with_data(AssetData::new::<A>())
@@ -87,6 +100,10 @@ impl DirectAssetAccessExt for World {
 
     fn get_uuid_handle<A: Asset>(&mut self, uuid: Uuid) -> Handle<A> {
         AssetUuids::get_handle_immediate(self, uuid)
+    }
+
+    fn get_default_handle<A: Asset>(&mut self) -> Handle<A> {
+        DefaultAssets::get_handle_immediate(self)
     }
 
     fn get_asset<A: Asset>(&self, id: impl Into<AssetId<A>>) -> Option<&A> {

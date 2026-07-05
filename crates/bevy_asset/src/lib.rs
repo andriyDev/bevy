@@ -190,6 +190,7 @@ pub use event::*;
 pub use folder::*;
 pub use futures_lite::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 pub use handle::*;
+pub use handle_map::*;
 pub use id::*;
 pub use loader::*;
 pub use loader_builders::*;
