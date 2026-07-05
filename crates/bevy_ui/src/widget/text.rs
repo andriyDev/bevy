@@ -2,7 +2,6 @@ use crate::{
     ComputedNode, ComputedUiRenderTargetInfo, ContentSize, FixedMeasure, Measure, MeasureArgs,
     Node, NodeMeasure,
 };
-use bevy_asset::Assets;
 use bevy_color::Color;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
@@ -260,7 +259,7 @@ impl Measure for TextMeasure {
 ///   color changes. This can be expensive, particularly for large blocks of text, and the [`bypass_change_detection`](bevy_ecs::change_detection::DetectChangesMut::bypass_change_detection)
 ///   method should be called when only changing the `Text`'s colors.
 pub fn measure_text_system(
-    fonts: Res<Assets<Font>>,
+    fonts: Query<&Font>,
     mut text_query: Query<
         (
             Entity,
@@ -305,7 +304,7 @@ pub fn measure_text_system(
 
         match text_pipeline.create_text_measure(
             entity,
-            fonts.as_ref(),
+            &fonts,
             text_reader.iter(entity),
             computed_target.scale_factor,
             &block,
@@ -432,7 +431,7 @@ pub fn text_system(
         font_atlas_set.entry(font_atlas_key).or_default().extend(
             deferred_font_atlas
                 .into_iter()
-                .map(|deferred| deferred.to_font_atlas(&mut asset_commands)),
+                .map(|deferred| deferred.to_font_atlas(&mut commands)),
         );
     }
 }

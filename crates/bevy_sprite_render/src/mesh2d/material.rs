@@ -15,6 +15,7 @@ use bevy_core_pipeline::{
     tonemapping::Tonemapping,
 };
 use bevy_derive::{Deref, DerefMut};
+use bevy_ecs::component::Mutable;
 use bevy_ecs::{
     prelude::*,
     system::{
@@ -265,15 +266,15 @@ pub enum AlphaMode2d {
 
 /// Adds the necessary ECS resources and render logic to enable rendering entities using the given [`Material2d`]
 /// asset type (which includes [`Material2d`] types).
-pub struct Material2dPlugin<M: Material2d>(PhantomData<M>);
+pub struct Material2dPlugin<M: Material2d + Component<Mutability = Mutable>>(PhantomData<M>);
 
-impl<M: Material2d> Default for Material2dPlugin<M> {
+impl<M: Material2d + Component<Mutability = Mutable>> Default for Material2dPlugin<M> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<M: Material2d> Plugin for Material2dPlugin<M>
+impl<M: Material2d + Component<Mutability = Mutable>> Plugin for Material2dPlugin<M>
 where
     M::Data: PartialEq + Eq + Hash + Clone,
 {
@@ -527,8 +528,10 @@ pub(super) type DrawMaterial2d<M> = (
     DrawMesh2d,
 );
 
-pub struct SetMaterial2dBindGroup<M: Material2d, const I: usize>(PhantomData<M>);
-impl<P: PhaseItem, M: Material2d, const I: usize> RenderCommand<P>
+pub struct SetMaterial2dBindGroup<M: Material2d + Component<Mutability = Mutable>, const I: usize>(
+    PhantomData<M>,
+);
+impl<P: PhaseItem, M: Material2d + Component<Mutability = Mutable>, const I: usize> RenderCommand<P>
     for SetMaterial2dBindGroup<M, I>
 {
     type Param = (
@@ -740,7 +743,7 @@ pub fn prepare_pending_mesh_material2d_queues(
     pending_mesh_material2d_queues.expire_stale_views(&all_views);
 }
 
-pub fn specialize_material2d_meshes<M: Material2d>(
+pub fn specialize_material2d_meshes<M: Material2d + Component<Mutability = Mutable>>(
     material2d_pipeline: Res<Material2dPipeline<M>>,
     mut pipelines: ResMut<SpecializedMeshPipelines<Material2dPipeline<M>>>,
     pipeline_cache: Res<PipelineCache>,
@@ -861,7 +864,7 @@ pub fn specialize_material2d_meshes<M: Material2d>(
     }
 }
 
-pub fn queue_material2d_meshes<M: Material2d>(
+pub fn queue_material2d_meshes<M: Material2d + Component<Mutability = Mutable>>(
     (render_meshes, render_materials): (
         Res<RenderAssets<RenderMesh>>,
         Res<RenderAssets<PreparedMaterial2d<M>>>,
@@ -1091,13 +1094,13 @@ pub struct PreparedMaterial2d<T: Material2d> {
     pub properties: Material2dProperties,
 }
 
-impl<T: Material2d> PreparedMaterial2d<T> {
+impl<T: Material2d + Component<Mutability = Mutable>> PreparedMaterial2d<T> {
     pub fn get_bind_group_id(&self) -> Material2dBindGroupId {
         Material2dBindGroupId(Some(self.bind_group.id()))
     }
 }
 
-impl<M: Material2d> RenderAsset for PreparedMaterial2d<M> {
+impl<M: Material2d + Component<Mutability = Mutable>> RenderAsset for PreparedMaterial2d<M> {
     type SourceAsset = M;
 
     type Param = (

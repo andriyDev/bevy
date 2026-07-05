@@ -12,7 +12,6 @@
 
 use crate::{Anchor, Sprite};
 use bevy_app::prelude::*;
-use bevy_asset::prelude::*;
 use bevy_camera::{
     visibility::{RenderLayers, ViewVisibility},
     Camera, Projection, RenderTarget,
@@ -96,8 +95,8 @@ fn sprite_picking(
         Option<&RenderLayers>,
     )>,
     primary_window: Query<Entity, With<PrimaryWindow>>,
-    images: Res<Assets<Image>>,
-    texture_atlas_layout: Res<Assets<TextureAtlasLayout>>,
+    images: Query<&Image>,
+    texture_atlas_layout: Query<&TextureAtlasLayout>,
     settings: Res<SpritePickingSettings>,
     sprite_query: Query<(
         Entity,
@@ -238,7 +237,7 @@ fn sprite_picking(
                     let cursor_in_valid_pixels_of_sprite = 'valid_pixel: {
                         match settings.picking_mode {
                             SpritePickingMode::AlphaThreshold(cutoff) => {
-                                let Some(image) = images.get(&sprite.image) else {
+                                let Ok(image) = images.get(&sprite.image) else {
                                     // [`Sprite::from_color`] returns a defaulted handle.
                                     // This handle doesn't return a valid image, so returning false here would make picking "color sprites" impossible
                                     break 'valid_pixel true;
