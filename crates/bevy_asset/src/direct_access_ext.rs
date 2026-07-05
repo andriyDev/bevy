@@ -9,7 +9,8 @@ use bevy_ecs::{
 use uuid::Uuid;
 
 use crate::{
-    meta::Settings, Asset, AssetData, AssetId, AssetReference, AssetServer, Handle, LoadBuilder,
+    handle_map::AssetUuids, meta::Settings, Asset, AssetData, AssetId, AssetReference, AssetServer,
+    Handle, LoadBuilder,
 };
 
 /// An extension trait for methods for working with assets directly from a [`World`].
@@ -21,10 +22,14 @@ pub trait DirectAssetAccessExt {
     /// Insert an asset similarly to [`Assets::add`].
     fn spawn_asset<A: Asset>(&mut self, asset: A) -> Handle<A>;
     /// Insert an asset similarly to [`Assets::add`].
-    fn spawn_asset_with_uuid<A: Asset>(&mut self, uuid: Uuid, asset: impl Into<A>) -> Handle<A>;
+    fn insert_uuid_asset<A: Asset>(&mut self, uuid: Uuid, asset: A) -> Handle<A>;
 
     /// Reserves an asset handle of type `A`.
     fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A>;
+    /// Gets the handle for a UUID asset.
+    ///
+    /// If the UUID asset has not been inserted, a new (empty) asset will be created.
+    fn get_uuid_handle<A: Asset>(&mut self, uuid: Uuid) -> Handle<A>;
 
     /// Gets an asset from its [`AssetId`].
     ///
@@ -70,18 +75,18 @@ impl DirectAssetAccessExt for World {
         entity_handle.into()
     }
 
-    fn spawn_asset_with_uuid<A: Asset>(&mut self, uuid: Uuid, asset: impl Into<A>) -> Handle<A> {
-        let entity_handle = self.spawn(asset.into()).handle_with_data(AssetData {
-            uuid: Some(uuid),
-            ..AssetData::new::<A>()
-        });
-        entity_handle.into()
+    fn insert_uuid_asset<A: Asset>(&mut self, uuid: Uuid, asset: A) -> Handle<A> {
+        AssetUuids::insert_uuid_asset(self, uuid, asset)
     }
 
     fn reserve_asset_handle<A: Asset>(&mut self) -> Handle<A> {
         self.spawn_empty()
             .handle_with_data(AssetData::new::<A>())
             .into()
+    }
+
+    fn get_uuid_handle<A: Asset>(&mut self, uuid: Uuid) -> Handle<A> {
+        AssetUuids::get_handle_immediate(self, uuid)
     }
 
     fn get_asset<A: Asset>(&self, id: impl Into<AssetId<A>>) -> Option<&A> {

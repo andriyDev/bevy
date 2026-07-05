@@ -175,6 +175,7 @@ mod direct_access_ext;
 mod event;
 mod folder;
 mod handle;
+mod handle_map;
 mod id;
 mod loader;
 mod loader_builders;
@@ -200,6 +201,7 @@ pub use server::*;
 pub use uuid;
 
 use crate::{
+    handle_map::AssetUuidMap,
     io::{
         embedded::{EmbeddedAssetRegistry, GetAssetServer},
         AssetSourceBuilder, AssetSourceBuilders, AssetSourceId,
@@ -352,6 +354,8 @@ impl AssetPlugin {
 
 impl Plugin for AssetPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<AssetUuidMap>();
+
         let embedded = EmbeddedAssetRegistry::default();
         {
             let mut sources = app
