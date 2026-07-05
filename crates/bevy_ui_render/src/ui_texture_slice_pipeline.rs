@@ -215,7 +215,7 @@ pub struct ExtractedUiTextureSlices {
 pub fn extract_ui_texture_slices(
     mut commands: Commands,
     mut extracted_ui_slicers: ResMut<ExtractedUiTextureSlices>,
-    texture_atlases: Extract<Res<Assets<TextureAtlasLayout>>>,
+    texture_atlases: Extract<Query<&TextureAtlasLayout>>,
     slicers_query: Extract<
         Query<(
             Entity,
@@ -244,7 +244,7 @@ pub fn extract_ui_texture_slices(
         // Skip invisible images
         if !inherited_visibility.get()
             || image.color.is_fully_transparent()
-            || image.image.id() == TRANSPARENT_IMAGE_HANDLE.id()
+            || image.image.uuid() == Some(Image::TRANSPARENT_UUID)
             || visual_box.size().cmple(Vec2::ZERO).any()
         {
             continue;
@@ -361,6 +361,7 @@ pub fn queue_ui_slices(
 
 pub fn prepare_ui_slices(
     mut commands: Commands,
+    mut default_assets: DefaultAssets,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline_cache: Res<PipelineCache>,
@@ -402,6 +403,8 @@ pub fn prepare_ui_slices(
         let mut vertices_index = 0;
         let mut indices_index = 0;
 
+        let default_id = default_assets.get_handle().id();
+
         for ui_phase in phases.values_mut() {
             let mut batch_item_index = 0;
             let mut batch_image_handle = None;
@@ -418,8 +421,8 @@ pub fn prepare_ui_slices(
 
                     if batch_image_handle.is_none()
                         || existing_batch.is_none()
-                        || (batch_image_handle != Some(AssetId::default())
-                            && texture_slices.image != AssetId::default()
+                        || (batch_image_handle != Some(default_id)
+                            && texture_slices.image != default_id
                             && batch_image_handle != Some(texture_slices.image))
                     {
                         if let Some(gpu_image) = gpu_images.get(texture_slices.image) {
@@ -455,8 +458,8 @@ pub fn prepare_ui_slices(
                             continue;
                         }
                     } else if let Some(ref mut existing_batch) = existing_batch
-                        && batch_image_handle == Some(AssetId::default())
-                        && texture_slices.image != AssetId::default()
+                        && batch_image_handle == Some(default_id)
+                        && texture_slices.image != default_id
                     {
                         if let Some(gpu_image) = gpu_images.get(texture_slices.image) {
                             batch_image_handle = Some(texture_slices.image);
@@ -541,7 +544,7 @@ pub fn prepare_ui_slices(
                             continue;
                         }
                     }
-                    let flags = if texture_slices.image != AssetId::default() {
+                    let flags = if texture_slices.image != default_id {
                         shader_flags::TEXTURED
                     } else {
                         shader_flags::UNTEXTURED

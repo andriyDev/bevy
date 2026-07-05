@@ -1,6 +1,7 @@
 use crate::ui_material::{MaterialNode, UiMaterial, UiMaterialKey};
 use crate::*;
 use bevy_asset::*;
+use bevy_ecs::component::Mutable;
 use bevy_ecs::{
     prelude::{Component, With},
     query::ROQueryItem,
@@ -39,7 +40,7 @@ impl<M: UiMaterial> Default for UiMaterialPlugin<M> {
     }
 }
 
-impl<M: UiMaterial> Plugin for UiMaterialPlugin<M>
+impl<M: UiMaterial + Component<Mutability = Mutable>> Plugin for UiMaterialPlugin<M>
 where
     M::Data: PartialEq + Eq + Hash + Clone,
 {
@@ -239,8 +240,10 @@ impl<P: PhaseItem, M: UiMaterial, const I: usize> RenderCommand<P> for SetMatUiV
     }
 }
 
-pub struct SetUiMaterialBindGroup<M: UiMaterial, const I: usize>(PhantomData<M>);
-impl<P: PhaseItem, M: UiMaterial, const I: usize> RenderCommand<P>
+pub struct SetUiMaterialBindGroup<M: UiMaterial + Component<Mutability = Mutable>, const I: usize>(
+    PhantomData<M>,
+);
+impl<P: PhaseItem, M: UiMaterial + Component<Mutability = Mutable>, const I: usize> RenderCommand<P>
     for SetUiMaterialBindGroup<M, I>
 {
     type Param = SRes<RenderAssets<PreparedUiMaterial<M>>>;
@@ -321,7 +324,7 @@ impl<M: UiMaterial> Default for ExtractedUiMaterialNodes<M> {
 pub fn extract_ui_material_nodes<M: UiMaterial>(
     mut commands: Commands,
     mut extracted_uinodes: ResMut<ExtractedUiMaterialNodes<M>>,
-    materials: Extract<Res<Assets<M>>>,
+    materials: Extract<Query<&M>>,
     uinode_query: Extract<
         Query<(
             Entity,
@@ -355,7 +358,7 @@ pub fn extract_ui_material_nodes<M: UiMaterial>(
         }
 
         // Skip loading materials
-        if !materials.contains(handle) {
+        if !materials.contains(handle.entity()) {
             continue;
         }
 
@@ -553,7 +556,7 @@ pub struct PreparedUiMaterial<T: UiMaterial> {
     pub key: T::Data,
 }
 
-impl<M: UiMaterial> RenderAsset for PreparedUiMaterial<M> {
+impl<M: UiMaterial + Component<Mutability = Mutable>> RenderAsset for PreparedUiMaterial<M> {
     type SourceAsset = M;
 
     type Param = (
@@ -591,7 +594,7 @@ impl<M: UiMaterial> RenderAsset for PreparedUiMaterial<M> {
     }
 }
 
-pub fn queue_ui_material_nodes<M: UiMaterial>(
+pub fn queue_ui_material_nodes<M: UiMaterial + Component<Mutability = Mutable>>(
     extracted_uinodes: Res<ExtractedUiMaterialNodes<M>>,
     draw_functions: Res<DrawFunctions<TransparentUi>>,
     ui_material_pipeline: Res<UiMaterialPipeline<M>>,

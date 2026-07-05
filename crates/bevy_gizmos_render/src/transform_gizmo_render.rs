@@ -4,7 +4,7 @@
 //! on a separate [`RenderLayers`] to render gizmo meshes always-on-top.
 
 use bevy_app::{App, Plugin, PostUpdate, Startup};
-use bevy_asset::{Assets, Handle};
+use bevy_asset::{AssetCommands, Handle};
 use bevy_camera::{
     visibility::{RenderLayers, Visibility},
     Camera, Camera3d,
@@ -16,7 +16,7 @@ use bevy_ecs::{
     query::{Or, With, Without},
     resource::Resource,
     schedule::IntoScheduleConfigs,
-    system::{Commands, Query, Res, ResMut},
+    system::{Commands, Query, Res},
 };
 use bevy_math::{
     primitives::{Cone, Cuboid, Cylinder, Torus},
@@ -145,11 +145,7 @@ fn inactive_color(color: Color) -> Color {
     )
 }
 
-fn spawn_gizmo_meshes(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn spawn_gizmo_meshes(mut commands: Commands) {
     let gizmo_layer = RenderLayers::layer(GIZMO_RENDER_LAYER);
 
     let colors = [COLOR_X, COLOR_Y, COLOR_Z, COLOR_VIEW];
@@ -160,44 +156,48 @@ fn spawn_gizmo_meshes(
     };
 
     // Helper: create a unique unlit material for a given axis
-    let mut make_mat = |axis: TransformGizmoAxis| {
-        materials.add(make_unlit_material(
+    let make_mat = |axis: TransformGizmoAxis, commands: &mut Commands| {
+        commands.spawn_asset(make_unlit_material(
             colors[TransformGizmoMaterials::axis_index(axis)],
         ))
     };
 
     // Pre-create meshes
-    let shaft_mesh = meshes.add(Cylinder::new(SHAFT_RADIUS, SHAFT_LENGTH).mesh().build());
-    let cone_mesh = meshes.add(Cone::new(CONE_RADIUS, CONE_HEIGHT).mesh().build());
-    let scale_cube_mesh = meshes.add(
+    let shaft_mesh = commands.spawn_asset(Mesh::from(
+        Cylinder::new(SHAFT_RADIUS, SHAFT_LENGTH).mesh().build(),
+    ));
+    let cone_mesh = commands.spawn_asset(Mesh::from(
+        Cone::new(CONE_RADIUS, CONE_HEIGHT).mesh().build(),
+    ));
+    let scale_cube_mesh = commands.spawn_asset(Mesh::from(
         Cuboid::new(SCALE_CUBE_SIZE, SCALE_CUBE_SIZE, SCALE_CUBE_SIZE)
             .mesh()
             .build(),
-    );
-    let rotate_torus_mesh = meshes.add(
+    ));
+    let rotate_torus_mesh = commands.spawn_asset(Mesh::from(
         Torus {
             minor_radius: 0.015,
             major_radius: ROTATE_RING_RADIUS,
         }
         .mesh()
         .build(),
-    );
-    let view_circle_mesh = meshes.add(
+    ));
+    let view_circle_mesh = commands.spawn_asset(Mesh::from(
         Torus {
             minor_radius: VIEW_CIRCLE_MINOR,
             major_radius: VIEW_CIRCLE_MAJOR,
         }
         .mesh()
         .build(),
-    );
-    let view_ring_mesh = meshes.add(
+    ));
+    let view_ring_mesh = commands.spawn_asset(Mesh::from(
         Torus {
             minor_radius: VIEW_RING_MINOR,
             major_radius: VIEW_RING_MAJOR,
         }
         .mesh()
         .build(),
-    );
+    ));
 
     // Axis rotations: cylinder default is Y-up
     let axis_rotation = |axis: TransformGizmoAxis| -> Quat {
@@ -239,7 +239,7 @@ fn spawn_gizmo_meshes(
         TransformGizmoAxis::Y,
         TransformGizmoAxis::Z,
     ] {
-        let mat = make_mat(axis);
+        let mat = make_mat(axis, &mut commands);
         spawn_child(
             &mut commands,
             shaft_mesh.clone(),
@@ -263,10 +263,11 @@ fn spawn_gizmo_meshes(
     }
 
     // View-plane circle (translate)
+    let mat = make_mat(TransformGizmoAxis::View, &mut commands);
     spawn_child(
         &mut commands,
         view_circle_mesh,
-        make_mat(TransformGizmoAxis::View),
+        mat,
         Transform::IDENTITY,
         TransformGizmoAxis::View,
         TransformGizmoMode::Translate,
@@ -278,7 +279,7 @@ fn spawn_gizmo_meshes(
         TransformGizmoAxis::Y,
         TransformGizmoAxis::Z,
     ] {
-        let mat = make_mat(axis);
+        let mat = make_mat(axis, &mut commands);
         let torus_rot = match axis {
             TransformGizmoAxis::X => Quat::from_rotation_z(core::f32::consts::FRAC_PI_2),
             TransformGizmoAxis::Y | TransformGizmoAxis::View => Quat::IDENTITY,
@@ -295,10 +296,11 @@ fn spawn_gizmo_meshes(
     }
 
     // View-axis ring (rotate)
+    let mat = make_mat(TransformGizmoAxis::View, &mut commands);
     spawn_child(
         &mut commands,
         view_ring_mesh,
-        make_mat(TransformGizmoAxis::View),
+        mat,
         Transform::IDENTITY,
         TransformGizmoAxis::View,
         TransformGizmoMode::Rotate,
@@ -310,7 +312,7 @@ fn spawn_gizmo_meshes(
         TransformGizmoAxis::Y,
         TransformGizmoAxis::Z,
     ] {
-        let mat = make_mat(axis);
+        let mat = make_mat(axis, &mut commands);
         spawn_child(
             &mut commands,
             shaft_mesh.clone(),
@@ -375,7 +377,7 @@ fn update_gizmo_meshes(
         ),
         Without<TransformGizmoRoot>,
     >,
-    mut std_materials: ResMut<Assets<StandardMaterial>>,
+    mut std_materials: Query<&mut StandardMaterial>,
     mut overlay_cam: Query<
         &mut Transform,
         (
@@ -443,7 +445,7 @@ fn update_gizmo_meshes(
         // Update the material color in-place (avoids writing MeshMaterial3d)
         let is_active = active_axis == Some(handle.axis);
         let desired_color = materials_res.color(handle.axis, is_active, dragging && !is_active);
-        if let Some(mut material) = std_materials.get_mut(&mat.0)
+        if let Ok(mut material) = std_materials.get_mut(&mat.0)
             && material.base_color != desired_color
         {
             material.base_color = desired_color;
