@@ -1322,44 +1322,6 @@ mod tests {
     }
 
     #[test]
-    fn add_with_uuid() {
-        let (mut app, _dir) = create_app();
-        app.init_asset::<CoolText>();
-        let uuid = Uuid::from_u128(123);
-        let handle = app.world().resource::<AssetServer>().add_with_uuid(
-            uuid,
-            CoolText {
-                text: "Hello".into(),
-                ..Default::default()
-            },
-        );
-        app.update();
-        let world = app.world();
-        let text = world.get::<CoolText>(&handle).unwrap();
-        assert_eq!(text.text, "Hello");
-        let handle2 = world.resource::<AssetServer>().load::<CoolText>(uuid);
-        assert_eq!(handle, handle2);
-    }
-
-    #[test]
-    fn add_default() {
-        let (mut app, _dir) = create_app();
-        app.init_asset::<CoolText>();
-        let handle = app.world().resource::<AssetServer>().add_default(CoolText {
-            text: "Hello".into(),
-            ..Default::default()
-        });
-        app.update();
-        let world = app.world();
-        let text = world.get::<CoolText>(&handle).unwrap();
-        assert_eq!(text.text, "Hello");
-        let handle2 = world
-            .resource::<AssetServer>()
-            .load::<CoolText>(AssetReference::Default);
-        assert_eq!(handle, handle2);
-    }
-
-    #[test]
     fn asset_observer_early() {
         let (mut app, _dir) = create_app();
         app.init_asset::<CoolText>();

@@ -46,6 +46,8 @@ mod text;
 mod text_access;
 mod text_edit;
 
+#[cfg(feature = "default_font")]
+use bevy_asset::DirectAssetAccessExt;
 pub use bounds::*;
 pub use cursor::*;
 pub use editing::*;
@@ -139,11 +141,7 @@ impl Plugin for TextPlugin {
             );
 
         #[cfg(feature = "default_font")]
-        {
-            use bevy_asset::AssetServer;
-
-            let assets = app.world().resource::<AssetServer>();
-            assets.add_default(Font::from_bytes(DEFAULT_FONT_DATA.to_vec()));
-        };
+        app.world_mut()
+            .insert_default_asset(Font::from_bytes(DEFAULT_FONT_DATA.to_vec()));
     }
 }

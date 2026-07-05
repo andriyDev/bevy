@@ -16,7 +16,7 @@ use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
 
 use bevy_asset::{
     uuid::{uuid, Uuid},
-    Asset, AssetApp, AssetServer, RenderAssetUsages,
+    Asset, AssetApp, DirectAssetAccessExt, RenderAssetUsages,
 };
 use bevy_color::{Color, ColorToComponents, Gray, LinearRgba, Srgba, Xyza};
 use bevy_ecs::resource::Resource;
@@ -218,9 +218,10 @@ impl Plugin for ImagePlugin {
         app.register_asset_reflect::<Image>();
 
         {
-            let assets = app.world().resource::<AssetServer>();
-            let _ = assets.add_default(Image::default());
-            let _ = assets.add_with_uuid(Image::TRANSPARENT_UUID, Image::transparent());
+            let _ = app.world_mut().insert_default_asset(Image::default());
+            let _ = app
+                .world_mut()
+                .insert_uuid_asset(Image::TRANSPARENT_UUID, Image::transparent());
         }
 
         #[cfg(feature = "compressed_image_saver")]

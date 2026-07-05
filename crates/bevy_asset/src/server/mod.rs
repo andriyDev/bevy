@@ -710,34 +710,6 @@ impl AssetServer {
         self.load_asset(None, LoadedAsset::new_with_dependencies(asset))
     }
 
-    /// Queues a new asset to be tracked by the [`AssetServer`] and returns a [`Handle`] to it. This can be used to track
-    /// dependencies of assets created at runtime.
-    ///
-    /// It can later be loaded/referenced with [`AssetReference::Uuid`].
-    ///
-    /// After the asset has been fully loaded by the [`AssetServer`], it will be spawned as a component on the [`Handle`] entity.
-    #[must_use = "not using the returned strong handle may result in the unexpected release of the asset"]
-    pub fn add_with_uuid<A: Asset>(&self, uuid: Uuid, asset: A) -> Handle<A> {
-        self.load_asset(
-            Some(AssetReference::Uuid(uuid)),
-            LoadedAsset::new_with_dependencies(asset),
-        )
-    }
-
-    /// Queues a new asset to be tracked by the [`AssetServer`] and returns a [`Handle`] to it. This can be used to track
-    /// dependencies of assets created at runtime.
-    ///
-    /// It can later be loaded/referenced with [`AssetReference::Default`].
-    ///
-    /// After the asset has been fully loaded by the [`AssetServer`], it will be spawned as a component on the [`Handle`] entity.
-    #[must_use = "not using the returned strong handle may result in the unexpected release of the asset"]
-    pub fn add_default<A: Asset>(&self, asset: A) -> Handle<A> {
-        self.load_asset(
-            Some(AssetReference::Default),
-            LoadedAsset::new_with_dependencies(asset),
-        )
-    }
-
     pub(crate) fn load_asset<A: Asset>(
         &self,
         reference: Option<AssetReference<'static>>,
