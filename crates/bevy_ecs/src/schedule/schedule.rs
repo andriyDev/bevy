@@ -3473,4 +3473,58 @@ mod tests {
 
         assert_eq!(total_dependencies(&schedule), 1);
     }
+
+    #[cfg(feature = "debug")]
+    #[test]
+    fn chain_weak_shuffling() {
+        fn run_schedule_with_shuffler(shuffle_seed: Option<u64>) -> Vec<u32> {
+            #[derive(Resource, Default)]
+            struct Counters(bevy_platform::sync::Mutex<Vec<u32>>);
+
+            let mut schedule = Schedule::default();
+
+            #[derive(Resource, Default)]
+            struct SomeRes;
+
+            fn system_1(_: ResMut<SomeRes>, counters: Res<Counters>) {
+                counters.0.lock().unwrap().push(1);
+            }
+            fn system_2(counters: Res<Counters>) {
+                counters.0.lock().unwrap().push(2);
+            }
+            fn system_3(_: ResMut<SomeRes>, counters: Res<Counters>) {
+                counters.0.lock().unwrap().push(3);
+            }
+
+            schedule.add_systems(system_1);
+            schedule.add_systems(system_2.after_weak(system_1));
+            schedule.add_systems(system_3.after_weak(system_2));
+
+            schedule.set_build_settings(ScheduleBuildSettings {
+                shuffle_seed,
+                ..Default::default()
+            });
+
+            let mut world = World::new();
+            world.init_resource::<Counters>();
+            world.init_resource::<SomeRes>();
+            schedule.initialize(&mut world).unwrap();
+            schedule.run(&mut world);
+
+            world
+                .remove_resource::<Counters>()
+                .unwrap()
+                .0
+                .into_inner()
+                .unwrap()
+        }
+
+        for i in 100_000_000..100_001_000 {
+            let order = run_schedule_with_shuffler(Some(i));
+            assert!(
+                order == [1, 2, 3] || order == [1, 3, 2],
+                "invalid order. order={order:?}"
+            );
+        }
+    }
 }
