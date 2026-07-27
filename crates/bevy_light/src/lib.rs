@@ -175,7 +175,7 @@ impl Plugin for LightPlugin {
                     .ambiguous_with(SimulationLightSystems::CheckLightVisibility),
             )
             .configure_sets(
-                PostUpdate,
+                Main,
                 SimulationLightSystems::AssignLightsToClusters
                     .before(bevy_app::TransformGizmoRenderStep),
             )
