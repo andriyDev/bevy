@@ -95,7 +95,7 @@ mod tests {
     use bevy_ecs::prelude::*;
     use bevy_platform::sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, PoisonError,
     };
     use bevy_tasks::futures::check_ready;
     use bevy_tasks::AsyncComputeTaskPool;
@@ -217,6 +217,59 @@ mod tests {
 
             panic!("Ran out of iterations waiting for tasks to complete");
         }
+    }
+
+    #[test]
+    fn can_borrow_from_future() {
+        struct Sync;
+
+        let mut app = App::new();
+        app.add_plugins((
+            AsyncPlugin,
+            ScheduleRunnerPlugin::default(),
+            TaskPoolPlugin::default(),
+        ))
+        .add_systems(Update, async_world_sync_point::<Sync>);
+
+        let system_state = app.world().resource::<AsyncWorld>().system_state();
+
+        #[derive(Resource)]
+        struct Result(Vec<usize>);
+
+        AsyncComputeTaskPool::get()
+            .spawn(async move {
+                let data = (0..1000).map(|i| i * 2).collect::<Vec<_>>();
+
+                system_state
+                    .bridge(Sync, |mut commands: Commands| {
+                        let out_data = data.iter().map(|i| i + 5).collect();
+                        commands.insert_resource(Result(out_data));
+                    })
+                    .await
+                    .unwrap();
+            })
+            .detach();
+
+        let app = Mutex::new(app);
+        run_loops(
+            || {
+                app.lock().unwrap_or_else(PoisonError::into_inner).update();
+            },
+            || {
+                app.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .world()
+                    .contains_resource::<Result>()
+                    .then_some(())
+            },
+        )
+        .unwrap();
+
+        let app = app.into_inner().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            &app.world().resource::<Result>().0,
+            &(0..1000).map(|i| i * 2 + 5).collect::<Vec<_>>()
+        );
     }
 
     #[test]
