@@ -4,24 +4,302 @@
 //!
 //! [`Asset`]: crate::Asset
 
-use crate::io::{
-    AssetReader, AssetReaderError, AssetWriter, AssetWriterError, PathStream, Reader,
-    ReaderNotSeekableError, SeekableReader,
+use crate::{
+    io::{
+        AssetReader, AssetReaderError, AssetWriter, AssetWriterError, PathStream, Reader,
+        ReaderNotSeekableError, SeekableReader,
+    },
+    normalize_path,
 };
-use alloc::{borrow::ToOwned, boxed::Box, sync::Arc, vec, vec::Vec};
+use alloc::{
+    borrow::{Cow, ToOwned},
+    boxed::Box,
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use bevy_platform::{
-    collections::HashMap,
+    collections::{
+        hash_map::{Entry, EntryRef},
+        HashMap,
+    },
     sync::{PoisonError, RwLock},
 };
 use core::{pin::Pin, task::Poll};
 use futures_io::{AsyncRead, AsyncWrite};
 use futures_lite::Stream;
+use slotmap::{new_key_type, SlotMap};
 use std::{
     io::{Error, ErrorKind, SeekFrom},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use super::AsyncSeek;
+
+new_key_type! { struct DirKey; }
+new_key_type! { struct ValueKey; }
+
+/// A virtual (aka in-memory) filesystem where the "files" store type `T`.
+///
+/// This allows finding elements with "path-like" syntax (e.g., `path/to/my/data.txt`). This
+/// filesystem is a strict tree: there are no cycles and every node has a unique parent.
+pub struct VirtualFilesystem<T> {
+    /// The index of the root directory in [`Self::dirs`].
+    root_key: DirKey,
+    /// The directories of the virtual filesystem.
+    dirs: SlotMap<DirKey, VirtualDirectory>,
+    /// The values stored inside the `dirs`.
+    ///
+    /// Only values stored in `dirs` are stored here, and each value may only be referenced by one
+    /// `dirs`.
+    values: SlotMap<ValueKey, T>,
+    /// Allows using `..` to "escape" out of the root directory.
+    ///
+    /// We just treat `..` as another directory.
+    allow_above_root: bool,
+}
+
+/// A single directory in a [`VirtualFilesystem`].
+///
+/// This stores all children of a directory by their name.
+#[derive(Default)]
+struct VirtualDirectory(HashMap<Box<str>, VirtualDirectoryEntryInner>);
+
+/// An entry in a [`VirtualDirectory`].
+#[derive(Clone, Copy)]
+enum VirtualDirectoryEntryInner {
+    /// This path is a subdirectory, with this key.
+    Folder(DirKey),
+    /// This path is a value, with this key.
+    Value(ValueKey),
+}
+
+impl<T> VirtualFilesystem<T> {
+    /// Creates a new filesystem.
+    ///
+    /// `allow_above_root` determines whether paths going "outside" the root are allowed using `..`.
+    pub fn new(allow_above_root: bool) -> Self {
+        let mut dirs = SlotMap::with_key();
+        let root_key = dirs.insert(VirtualDirectory::default());
+        Self {
+            root_key,
+            dirs,
+            values: SlotMap::with_key(),
+            allow_above_root,
+        }
+    }
+
+    /// Converts a component into a string that we can use for storing in our virtual filesystem.
+    fn component_to_name<'a>(
+        component: Component<'a>,
+        allow_above_root: bool,
+    ) -> Result<Cow<'a, str>, ()> {
+        match component {
+            // We assume the path is valid and normalized.
+            Component::CurDir | Component::Prefix(_) | Component::RootDir => panic!(),
+            Component::ParentDir => {
+                if !allow_above_root {
+                    return Err(());
+                }
+                Ok(Cow::Borrowed(".."))
+            }
+            Component::Normal(name) => Ok(name.to_string_lossy()),
+        }
+    }
+
+    /// Finds an entry given its `path`.
+    ///
+    /// We assume `path` has already been validated (no weird Windows stuff, not an absolute path,
+    /// etc) and normalized (`.` and `..` entries have been collapsed).
+    fn find_entry_unchecked(&self, path: &Path) -> Result<VirtualDirectoryEntryInner, ()> {
+        let mut last_entry = VirtualDirectoryEntryInner::Folder(self.root_key);
+        for component in path.components() {
+            let last_folder = match last_entry {
+                VirtualDirectoryEntryInner::Folder(folder) => folder,
+                VirtualDirectoryEntryInner::Value(_) => return Err(()),
+            };
+
+            let component_name = Self::component_to_name(component, self.allow_above_root)?;
+
+            let dir = &self.dirs[last_folder];
+            last_entry = *dir.0.get(component_name.as_ref()).ok_or(())?;
+        }
+
+        Ok(last_entry)
+    }
+
+    /// Same as [`Self::find_entry_unchecked`], but performs path validation.
+    fn find_entry(&self, path: &Path) -> Result<VirtualDirectoryEntryInner, ()> {
+        let path = normalize_path(path);
+        self.find_entry_unchecked(&path)
+    }
+
+    /// Finds the parent directory of a path and its name in that directory.
+    ///
+    /// This also does normalization.
+    fn get_parent_directory_and_name<'a>(&self, path: &'a Path) -> Result<(DirKey, Box<str>), ()> {
+        let path = normalize_path(path);
+        match path.parent() {
+            // path is the empty path, which is not allowed.
+            None => Err(()),
+            Some(parent) => {
+                let basename = Self::component_to_name(
+                    // Unwrap is safe since we know we have at least one component (because parent
+                    // is Some).
+                    path.components().last().unwrap(),
+                    self.allow_above_root,
+                )?;
+                match self.find_entry_unchecked(&parent)? {
+                    VirtualDirectoryEntryInner::Folder(folder) => Ok((folder, basename.into())),
+                    VirtualDirectoryEntryInner::Value(_) => Err(()),
+                }
+            }
+        }
+    }
+
+    /// Gets the value at `path`.
+    ///
+    /// Returns an error if the path is missing, or if the path refers to a directory instead of a
+    /// value.
+    pub fn get_value<'a>(&'a self, path: &Path) -> Result<&'a T, ()> {
+        match self.find_entry(path)? {
+            VirtualDirectoryEntryInner::Folder(_) => Err(()),
+            VirtualDirectoryEntryInner::Value(value) => Ok(&self.values[value]),
+        }
+    }
+
+    /// Gets the value mutably at `path`.
+    ///
+    /// Returns an error if the path is missing, or if the path refers to a directory instead of a
+    /// value.
+    pub fn get_value_mut<'a>(&'a mut self, path: &Path) -> Result<&'a mut T, ()> {
+        match self.find_entry(path)? {
+            VirtualDirectoryEntryInner::Folder(_) => Err(()),
+            VirtualDirectoryEntryInner::Value(value) => Ok(&mut self.values[value]),
+        }
+    }
+
+    /// Iterates the contents of the directory at `path`.
+    ///
+    /// To iterate the root directory, set `path` to `Path::new("")`.
+    ///
+    /// Returns an error if the path is missing, or if the path refers to a value instead of a
+    /// directory.
+    pub fn iter_directory<'a>(&'a self, path: &Path) -> Result<VirtualDirectoryIter<'a, T>, ()> {
+        match self.find_entry(path)? {
+            VirtualDirectoryEntryInner::Value(_) => Err(()),
+            VirtualDirectoryEntryInner::Folder(folder) => Ok(VirtualDirectoryIter {
+                iter: self.dirs[folder].0.iter(),
+                values: &self.values,
+            }),
+        }
+    }
+
+    /// Creates a directory in the filesystem at `path`.
+    ///
+    /// Returns an error if the parent directory is missing, or if there is already an entry at the
+    /// given `path`.
+    pub fn create_directory(&mut self, path: &Path) -> Result<(), ()> {
+        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
+
+        if self.dirs[parent_directory].0.contains_key(&*basename) {
+            return Err(());
+        }
+        let dir_key = self.dirs.insert(VirtualDirectory::default());
+        self.dirs[parent_directory]
+            .0
+            .insert(basename, VirtualDirectoryEntryInner::Folder(dir_key));
+        Ok(())
+    }
+
+    /// Inserts a value at `path`.
+    ///
+    /// Returns an error if the parent directory is missing, or if there is already an entry at the
+    /// given `path`.
+    pub fn insert_value(&mut self, path: &Path, value: T) -> Result<(), ()> {
+        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
+
+        match self.dirs[parent_directory].0.entry(basename) {
+            Entry::Occupied(_) => Err(()),
+            Entry::Vacant(entry) => {
+                let value_key = self.values.insert(value);
+                entry.insert(VirtualDirectoryEntryInner::Value(value_key));
+                Ok(())
+            }
+        }
+    }
+
+    /// Deletes an entry at `path`.
+    ///
+    /// Returns an error if the parent directory is missing, if there is no such entry, or if the
+    /// entry is a directory that is non-empty.
+    pub fn delete_entry(&mut self, path: &Path) -> Result<(), ()> {
+        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
+
+        let EntryRef::Occupied(entry) = self.dirs[parent_directory].0.entry_ref(&*basename) else {
+            return Err(());
+        };
+
+        match *entry.get() {
+            VirtualDirectoryEntryInner::Folder(dir) => {
+                // Before removing the directory, we need to make sure it's empty.
+                if !self.dirs[dir].0.is_empty() {
+                    return Err(());
+                }
+
+                self.dirs[parent_directory].0.remove(&*basename);
+                Ok(())
+            }
+            VirtualDirectoryEntryInner::Value(value) => {
+                self.values.remove(value);
+                entry.remove();
+                Ok(())
+            }
+        }
+    }
+}
+
+/// An entry in a [`VirtualDir`].
+#[derive(Clone, Copy)]
+pub enum VirtualDirectoryEntry<'a, T> {
+    /// This path is a subdirectory, with this key.
+    Folder,
+    /// This path is a value, with this key.
+    Value(&'a T),
+}
+
+/// An iterator over entries of a directory inside [`VirtualFilesystem`].
+pub struct VirtualDirectoryIter<'a, T> {
+    iter: bevy_platform::collections::hash_map::Iter<'a, Box<str>, VirtualDirectoryEntryInner>,
+    values: &'a SlotMap<ValueKey, T>,
+}
+
+impl<'a, T> Iterator for VirtualDirectoryIter<'a, T> {
+    type Item = (&'a str, VirtualDirectoryEntry<'a, T>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (key, value) = self.iter.next()?;
+        Some((
+            &**key,
+            match *value {
+                VirtualDirectoryEntryInner::Folder(_) => VirtualDirectoryEntry::Folder,
+                VirtualDirectoryEntryInner::Value(value) => {
+                    VirtualDirectoryEntry::Value(&self.values[value])
+                }
+            },
+        ))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a, T> ExactSizeIterator for VirtualDirectoryIter<'a, T> {
+    fn len(&self) -> usize {
+        self.iter.len()
+    }
+}
 
 #[derive(Default, Debug)]
 struct DirInternal {
