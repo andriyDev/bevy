@@ -11,23 +11,17 @@ use crate::{
     },
     normalize_path,
 };
-use alloc::{
-    borrow::{Cow, ToOwned},
-    boxed::Box,
-    sync::Arc,
-    vec,
-    vec::Vec,
-};
+use alloc::{borrow::ToOwned, boxed::Box, format, string::String, sync::Arc, vec, vec::Vec};
 use bevy_platform::{
     collections::{
-        hash_map::{Entry, EntryRef},
+        hash_map::{EntryRef, VacantEntryRef},
         HashMap,
     },
+    hash::FixedHasher,
     sync::{PoisonError, RwLock},
 };
 use core::{pin::Pin, task::Poll};
 use futures_io::{AsyncRead, AsyncWrite};
-use futures_lite::Stream;
 use slotmap::{new_key_type, SlotMap};
 use std::{
     io::{Error, ErrorKind, SeekFrom},
@@ -36,42 +30,66 @@ use std::{
 
 use super::AsyncSeek;
 
-new_key_type! { struct DirKey; }
-new_key_type! { struct ValueKey; }
+new_key_type! {
+    /// The (stable) key of a directory in a [`VirtualFilesystem`].
+    struct DirKey;
+}
+new_key_type! {
+    /// The (stable) key of a value in a [`VirtualFilesystem`].
+    struct ValueKey;
+}
 
 /// A virtual (aka in-memory) filesystem where the "files" store type `T`.
 ///
 /// This allows finding elements with "path-like" syntax (e.g., `path/to/my/data.txt`). This
 /// filesystem is a strict tree: there are no cycles and every node has a unique parent.
+///
+/// Paths are slash-delimited strings. Components in a path cannot be empty or `.`. Components may
+/// be `..` if and only if A) the filesystem was created with `allow_above_root` set to true, and B)
+/// all parents of a directory all the way to the root are also `..` (in other words, `../abc/..` is
+/// invalid).
 pub struct VirtualFilesystem<T> {
     /// The index of the root directory in [`Self::dirs`].
     root_key: DirKey,
     /// The directories of the virtual filesystem.
-    dirs: SlotMap<DirKey, VirtualDirectory>,
+    dirs: SlotMap<DirKey, Dir>,
     /// The values stored inside the `dirs`.
     ///
     /// Only values stored in `dirs` are stored here, and each value may only be referenced by one
     /// `dirs`.
     values: SlotMap<ValueKey, T>,
-    /// Allows using `..` to "escape" out of the root directory.
-    ///
-    /// We just treat `..` as another directory.
-    allow_above_root: bool,
 }
 
 /// A single directory in a [`VirtualFilesystem`].
 ///
 /// This stores all children of a directory by their name.
-#[derive(Default)]
-struct VirtualDirectory(HashMap<Box<str>, VirtualDirectoryEntryInner>);
+struct Dir {
+    children: HashMap<Box<str>, ChildEntry>,
+    /// Allows using `..` to "escape" out of this directory.
+    ///
+    /// This is only supported at the top-level and only if this directory is on a `..` chain
+    /// starting from the root.
+    allow_above: bool,
+}
 
-/// An entry in a [`VirtualDirectory`].
+/// An entry in a directory of a [`VirtualFilesystem`].
 #[derive(Clone, Copy)]
-enum VirtualDirectoryEntryInner {
-    /// This path is a subdirectory, with this key.
+enum ChildEntry {
+    /// The entry is a directory with this key.
     Folder(DirKey),
-    /// This path is a value, with this key.
+    /// The entry is a value, with this key.
     Value(ValueKey),
+}
+
+/// The kind of entry in a [`VirtualFilesystem`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryKind {
+    /// The entry is a value.
+    Value,
+    /// The entry is a folder.
+    Folder,
+    /// The value is missing (but its parent is present).
+    Missing,
 }
 
 impl<T> VirtualFilesystem<T> {
@@ -80,510 +98,415 @@ impl<T> VirtualFilesystem<T> {
     /// `allow_above_root` determines whether paths going "outside" the root are allowed using `..`.
     pub fn new(allow_above_root: bool) -> Self {
         let mut dirs = SlotMap::with_key();
-        let root_key = dirs.insert(VirtualDirectory::default());
+        let root_key = dirs.insert(Dir {
+            children: Default::default(),
+            allow_above: allow_above_root,
+        });
         Self {
             root_key,
             dirs,
             values: SlotMap::with_key(),
-            allow_above_root,
         }
     }
 
-    /// Converts a component into a string that we can use for storing in our virtual filesystem.
-    fn component_to_name<'a>(
-        component: Component<'a>,
-        allow_above_root: bool,
-    ) -> Result<Cow<'a, str>, ()> {
-        match component {
-            // We assume the path is valid and normalized.
-            Component::CurDir | Component::Prefix(_) | Component::RootDir => panic!(),
-            Component::ParentDir => {
-                if !allow_above_root {
+    /// Normalizes a path by collapsing all occurrences of `.` and `..` segments where possible as
+    /// per [RFC 1808](https://datatracker.ietf.org/doc/html/rfc1808).
+    pub fn normalize_path(path: &str) -> String {
+        let mut result_components = vec![];
+        // Note: we split on both / and \\ because of Windows. Otherwise a path stored in an asset
+        // from Windows could fail to load on Linux. So we do this regardless of platform.
+        for component in path.split(&['/', '\\']) {
+            if component == "." {
+                // Skip
+            } else if component == ".." {
+                // Note: If the result_path ends in `..`, Path::file_name returns None, so we'll end up
+                // preserving it.
+                if let Some(&last_component) = result_components.last()
+                    && last_component != ".."
+                {
+                    // This assert is just a sanity check - we already know the component is present.
+                    assert!(result_components.pop().is_some());
+                } else {
+                    // Preserve ".." if insufficient matches (per RFC 1808).
+                    result_components.push(component);
+                }
+            } else {
+                result_components.push(component);
+            }
+        }
+
+        result_components.join("/")
+    }
+
+    /// Gets the kind of entry stored at `path`.
+    ///
+    /// Returns [`EntryKind::Missing`] if the parent is present, but the child is missing. If the
+    /// parent is also missing, returns an error.
+    pub fn get_entry_kind(&self, path: &str) -> Result<EntryKind, ()> {
+        let (parent_key, child_name) = self.get_parent_and_child_name(path)?;
+
+        let parent_dir = &self.dirs[parent_key];
+        Ok(match parent_dir.children.get(child_name) {
+            Some(ChildEntry::Folder(_)) => EntryKind::Folder,
+            Some(ChildEntry::Value(_)) => EntryKind::Value,
+            None => EntryKind::Missing,
+        })
+    }
+
+    /// Iterates all children of the directory at `path`.
+    pub fn iter_directory(&self, path: &str) -> Result<impl ExactSizeIterator<Item = &str>, ()> {
+        match self.find_entry(path)? {
+            ChildEntry::Value(_) => return Err(()),
+            ChildEntry::Folder(dir_key) => Ok(self.dirs[dir_key].children.keys().map(|b| &**b)),
+        }
+    }
+
+    /// Creates a new, empty directory at `path`.
+    pub fn create_directory(&mut self, path: &str) -> Result<(), ()> {
+        let (parent_key, child_name) = self.get_parent_and_child_name(path)?;
+        let parent_dir = &self.dirs[parent_key];
+        Self::check_child_name(child_name, parent_dir.allow_above)?;
+
+        if parent_dir.children.contains_key(child_name) {
+            return Err(());
+        }
+
+        let dir_key = self.dirs.insert(Dir {
+            children: Default::default(),
+            // This condition also implies that the parent is `allow_above`, since otherwise
+            // check_child_name would have filtered it out.
+            allow_above: child_name == "..",
+        });
+
+        self.dirs[parent_key]
+            .children
+            .insert(child_name.into(), ChildEntry::Folder(dir_key));
+
+        Ok(())
+    }
+
+    /// Gets the value at `path` if present.
+    pub fn get_value(&self, path: &str) -> Result<&T, ()> {
+        match self.find_entry(path)? {
+            ChildEntry::Folder(_) => Err(()),
+            ChildEntry::Value(value_key) => Ok(&self.values[value_key]),
+        }
+    }
+
+    /// Gets the value mutably at `path`, or a [`MissingValueMut`] if not present.
+    pub fn get_value_mut<'f, 'p>(&'f mut self, path: &'p str) -> Result<ValueMut<'f, 'p, T>, ()> {
+        let (parent_key, child_name) = self.get_parent_and_child_name(path)?;
+        Self::check_child_name(child_name, /*allow_above=*/ false)?;
+
+        let parent_dir = &mut self.dirs[parent_key];
+        Ok(match parent_dir.children.entry_ref(child_name) {
+            EntryRef::Occupied(entry) => {
+                let value_key = match *entry.get() {
+                    ChildEntry::Folder(_) => return Err(()),
+                    ChildEntry::Value(value_key) => value_key,
+                };
+                ValueMut::Present(&mut self.values[value_key])
+            }
+            EntryRef::Vacant(entry) => ValueMut::Missing(MissingValueMut {
+                entry,
+                values: &mut self.values,
+            }),
+        })
+    }
+
+    /// Deletes the entry at `path`, returning the value if `path` corresponds to a value.
+    pub fn delete_entry(&mut self, path: &str) -> Result<Option<T>, ()> {
+        let (parent_key, child_name) = self.get_parent_and_child_name(path)?;
+        let parent_dir = &mut self.dirs[parent_key];
+
+        let entry = match parent_dir.children.entry_ref(child_name) {
+            EntryRef::Vacant(_) => return Err(()),
+            EntryRef::Occupied(entry) => entry,
+        };
+
+        match *entry.get() {
+            ChildEntry::Value(value_key) => {
+                entry.remove();
+                Ok(self.values.remove(value_key))
+            }
+            ChildEntry::Folder(child_dir) => {
+                if !self.dirs[child_dir].children.is_empty() {
                     return Err(());
                 }
-                Ok(Cow::Borrowed(".."))
+
+                self.dirs.remove(child_dir);
+                self.dirs[parent_key].children.remove(child_name);
+                Ok(None)
             }
-            Component::Normal(name) => Ok(name.to_string_lossy()),
         }
     }
 
-    /// Finds an entry given its `path`.
-    ///
-    /// We assume `path` has already been validated (no weird Windows stuff, not an absolute path,
-    /// etc) and normalized (`.` and `..` entries have been collapsed).
-    fn find_entry_unchecked(&self, path: &Path) -> Result<VirtualDirectoryEntryInner, ()> {
-        let mut last_entry = VirtualDirectoryEntryInner::Folder(self.root_key);
-        for component in path.components() {
-            let last_folder = match last_entry {
-                VirtualDirectoryEntryInner::Folder(folder) => folder,
-                VirtualDirectoryEntryInner::Value(_) => return Err(()),
+    /// Splits the path into its parent directory (which is then looked up), and the name of the
+    /// child.
+    fn get_parent_and_child_name<'a>(&self, path: &'a str) -> Result<(DirKey, &'a str), ()> {
+        match path.rsplit_once('/') {
+            None => Ok((self.root_key, path)),
+            Some((parent_path, basename)) => {
+                let parent_key = match self.find_entry(parent_path)? {
+                    ChildEntry::Value(_) => return Err(()),
+                    ChildEntry::Folder(parent_key) => parent_key,
+                };
+                Ok((parent_key, basename))
+            }
+        }
+    }
+
+    /// Finds the entry key at the given `path`.
+    fn find_entry(&self, path: &str) -> Result<ChildEntry, ()> {
+        let mut last_entry = ChildEntry::Folder(self.root_key);
+        for component in path.split('/') {
+            let last_dir = match last_entry {
+                ChildEntry::Folder(last_dir) => last_dir,
+                ChildEntry::Value(_) => return Err(()),
             };
 
-            let component_name = Self::component_to_name(component, self.allow_above_root)?;
-
-            let dir = &self.dirs[last_folder];
-            last_entry = *dir.0.get(component_name.as_ref()).ok_or(())?;
+            let dir = &self.dirs[last_dir];
+            match dir.children.get(component) {
+                None => return Err(()),
+                Some(&entry) => {
+                    last_entry = entry;
+                }
+            }
         }
 
         Ok(last_entry)
     }
 
-    /// Same as [`Self::find_entry_unchecked`], but performs path validation.
-    fn find_entry(&self, path: &Path) -> Result<VirtualDirectoryEntryInner, ()> {
-        let path = normalize_path(path);
-        self.find_entry_unchecked(&path)
-    }
-
-    /// Finds the parent directory of a path and its name in that directory.
+    /// Checks if the `child_name` is a valid child.
     ///
-    /// This also does normalization.
-    fn get_parent_directory_and_name<'a>(&self, path: &'a Path) -> Result<(DirKey, Box<str>), ()> {
-        let path = normalize_path(path);
-        match path.parent() {
-            // path is the empty path, which is not allowed.
-            None => Err(()),
-            Some(parent) => {
-                let basename = Self::component_to_name(
-                    // Unwrap is safe since we know we have at least one component (because parent
-                    // is Some).
-                    path.components().last().unwrap(),
-                    self.allow_above_root,
-                )?;
-                match self.find_entry_unchecked(&parent)? {
-                    VirtualDirectoryEntryInner::Folder(folder) => Ok((folder, basename.into())),
-                    VirtualDirectoryEntryInner::Value(_) => Err(()),
-                }
-            }
-        }
-    }
-
-    /// Gets the value at `path`.
-    ///
-    /// Returns an error if the path is missing, or if the path refers to a directory instead of a
-    /// value.
-    pub fn get_value<'a>(&'a self, path: &Path) -> Result<&'a T, ()> {
-        match self.find_entry(path)? {
-            VirtualDirectoryEntryInner::Folder(_) => Err(()),
-            VirtualDirectoryEntryInner::Value(value) => Ok(&self.values[value]),
-        }
-    }
-
-    /// Gets the value mutably at `path`.
-    ///
-    /// Returns an error if the path is missing, or if the path refers to a directory instead of a
-    /// value.
-    pub fn get_value_mut<'a>(&'a mut self, path: &Path) -> Result<&'a mut T, ()> {
-        match self.find_entry(path)? {
-            VirtualDirectoryEntryInner::Folder(_) => Err(()),
-            VirtualDirectoryEntryInner::Value(value) => Ok(&mut self.values[value]),
-        }
-    }
-
-    /// Iterates the contents of the directory at `path`.
-    ///
-    /// To iterate the root directory, set `path` to `Path::new("")`.
-    ///
-    /// Returns an error if the path is missing, or if the path refers to a value instead of a
-    /// directory.
-    pub fn iter_directory<'a>(&'a self, path: &Path) -> Result<VirtualDirectoryIter<'a, T>, ()> {
-        match self.find_entry(path)? {
-            VirtualDirectoryEntryInner::Value(_) => Err(()),
-            VirtualDirectoryEntryInner::Folder(folder) => Ok(VirtualDirectoryIter {
-                iter: self.dirs[folder].0.iter(),
-                values: &self.values,
-            }),
-        }
-    }
-
-    /// Creates a directory in the filesystem at `path`.
-    ///
-    /// Returns an error if the parent directory is missing, or if there is already an entry at the
-    /// given `path`.
-    pub fn create_directory(&mut self, path: &Path) -> Result<(), ()> {
-        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
-
-        if self.dirs[parent_directory].0.contains_key(&*basename) {
+    /// `allow_above` controls whether the child is allowed to be an "above" relative name (`..`).
+    fn check_child_name(child_name: &str, allow_above: bool) -> Result<(), ()> {
+        if child_name == "" || child_name == "." {
             return Err(());
         }
-        let dir_key = self.dirs.insert(VirtualDirectory::default());
-        self.dirs[parent_directory]
-            .0
-            .insert(basename, VirtualDirectoryEntryInner::Folder(dir_key));
+        if child_name.contains('/') {
+            return Err(());
+        }
+
+        if !allow_above && child_name == ".." {
+            return Err(());
+        }
+
         Ok(())
     }
+}
 
-    /// Inserts a value at `path`.
+/// Mutable access to a value in a [`VirtualFilesystem`].
+pub enum ValueMut<'f, 'p, T> {
+    /// The value is present, and the mutable borrow was returned.
+    Present(&'f mut T),
+    /// The value is missing, and can be inserted.
+    Missing(MissingValueMut<'f, 'p, T>),
+}
+
+impl<'f, T> ValueMut<'f, '_, T> {
+    /// Inserts the value, either replacing the existing value, or inserting this new value into the
+    /// filesystem.
     ///
-    /// Returns an error if the parent directory is missing, or if there is already an entry at the
-    /// given `path`.
-    pub fn insert_value(&mut self, path: &Path, value: T) -> Result<(), ()> {
-        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
-
-        match self.dirs[parent_directory].0.entry(basename) {
-            Entry::Occupied(_) => Err(()),
-            Entry::Vacant(entry) => {
-                let value_key = self.values.insert(value);
-                entry.insert(VirtualDirectoryEntryInner::Value(value_key));
-                Ok(())
+    /// Returns a reference to the value.
+    pub fn insert(self, value: T) -> &'f mut T {
+        match self {
+            Self::Present(stored_value) => {
+                *stored_value = value;
+                stored_value
             }
+            Self::Missing(entry) => entry.insert(value),
         }
     }
 
-    /// Deletes an entry at `path`.
-    ///
-    /// Returns an error if the parent directory is missing, if there is no such entry, or if the
-    /// entry is a directory that is non-empty.
-    pub fn delete_entry(&mut self, path: &Path) -> Result<(), ()> {
-        let (parent_directory, basename) = self.get_parent_directory_and_name(path)?;
-
-        let EntryRef::Occupied(entry) = self.dirs[parent_directory].0.entry_ref(&*basename) else {
-            return Err(());
-        };
-
-        match *entry.get() {
-            VirtualDirectoryEntryInner::Folder(dir) => {
-                // Before removing the directory, we need to make sure it's empty.
-                if !self.dirs[dir].0.is_empty() {
-                    return Err(());
-                }
-
-                self.dirs[parent_directory].0.remove(&*basename);
-                Ok(())
-            }
-            VirtualDirectoryEntryInner::Value(value) => {
-                self.values.remove(value);
-                entry.remove();
-                Ok(())
-            }
+    /// Ensures a value exists, by inserting the default if the value is missing.
+    pub fn or_insert(self, default: T) -> &'f mut T {
+        match self {
+            Self::Present(value) => value,
+            Self::Missing(entry) => entry.insert(default),
         }
     }
 }
 
-/// An entry in a [`VirtualDir`].
-#[derive(Clone, Copy)]
-pub enum VirtualDirectoryEntry<'a, T> {
-    /// This path is a subdirectory, with this key.
-    Folder,
-    /// This path is a value, with this key.
-    Value(&'a T),
-}
-
-/// An iterator over entries of a directory inside [`VirtualFilesystem`].
-pub struct VirtualDirectoryIter<'a, T> {
-    iter: bevy_platform::collections::hash_map::Iter<'a, Box<str>, VirtualDirectoryEntryInner>,
-    values: &'a SlotMap<ValueKey, T>,
-}
-
-impl<'a, T> Iterator for VirtualDirectoryIter<'a, T> {
-    type Item = (&'a str, VirtualDirectoryEntry<'a, T>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (key, value) = self.iter.next()?;
-        Some((
-            &**key,
-            match *value {
-                VirtualDirectoryEntryInner::Folder(_) => VirtualDirectoryEntry::Folder,
-                VirtualDirectoryEntryInner::Value(value) => {
-                    VirtualDirectoryEntry::Value(&self.values[value])
-                }
-            },
-        ))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+impl<'f, T: Default> ValueMut<'f, '_, T> {
+    /// Ensures a value exists, by inserting the default if the value is missing.
+    pub fn or_default(self) -> &'f mut T {
+        match self {
+            Self::Present(value) => value,
+            Self::Missing(entry) => entry.insert(T::default()),
+        }
     }
 }
 
-impl<'a, T> ExactSizeIterator for VirtualDirectoryIter<'a, T> {
-    fn len(&self) -> usize {
-        self.iter.len()
+/// A struct to insert a value that was missing.
+pub struct MissingValueMut<'f, 'p, T> {
+    /// The entry into the parent directory to insert the new value key.
+    entry: VacantEntryRef<'f, 'p, Box<str>, str, ChildEntry, FixedHasher>,
+    /// The values map where the value will be inserted.
+    values: &'f mut SlotMap<ValueKey, T>,
+}
+
+impl<'f, T> MissingValueMut<'f, '_, T> {
+    /// Inserts a value into the parent directory's slot, and returns a mutable reference to the
+    /// value.
+    pub fn insert(self, value: T) -> &'f mut T {
+        let value_key = self.values.insert(value);
+        self.entry.insert(ChildEntry::Value(value_key));
+
+        &mut self.values[value_key]
     }
 }
 
-#[derive(Default, Debug)]
-struct DirInternal {
-    assets: HashMap<Box<str>, Data>,
-    metadata: HashMap<Box<str>, Data>,
-    dirs: HashMap<Box<str>, Dir>,
-    path: PathBuf,
+#[derive(Default)]
+struct MemoryAsset {
+    asset_bytes: Option<Value>,
+    meta_bytes: Option<Value>,
 }
 
-/// A clone-able (internally [`Arc`]-ed), thread-safe in-memory filesystem.
-///
-/// This was built for [`MemoryAssetReader`] and is primarily used by unit tests
-/// and by the [`embedded`] backend.
-///
-/// [`embedded`]: crate::io::embedded
-#[derive(Default, Clone, Debug)]
-pub struct Dir(Arc<RwLock<DirInternal>>);
+impl MemoryAsset {
+    fn is_empty(&self) -> bool {
+        self.asset_bytes.is_none() && self.meta_bytes.is_none()
+    }
+}
 
-impl Dir {
-    /// Creates a new [`Dir`] for the given `path`.
-    pub fn new(path: PathBuf) -> Self {
-        Self(Arc::new(RwLock::new(DirInternal {
-            path,
-            ..Default::default()
-        })))
+#[derive(Clone)]
+pub struct MemoryAssetFilesystem(Arc<RwLock<VirtualFilesystem<MemoryAsset>>>);
+
+impl MemoryAssetFilesystem {
+    pub fn new() -> Self {
+        Self(Arc::new(RwLock::new(VirtualFilesystem::new(
+            /*allow_above_root=*/ true,
+        ))))
     }
 
-    /// Inserts textual data as an asset, at the `path` relative to this `Dir`.
+    pub fn get_asset(&self, path: &Path) -> Option<Value> {
+        let path = path.to_str().unwrap();
+
+        let vfs = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        let value = vfs.get_value(path).ok()?;
+        value.asset_bytes.clone()
+    }
+
+    pub fn get_metadata(&self, path: &Path) -> Option<Value> {
+        let path = path.to_str().unwrap();
+
+        let vfs = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        let value = vfs.get_value(path).ok()?;
+        value.meta_bytes.clone()
+    }
+
+    pub fn get_children(&self, path: &Path) -> Result<Vec<String>, ()> {
+        let path = path.to_str().unwrap();
+
+        let vfs = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        let children = vfs.iter_directory(path)?;
+        Ok(children.map(ToOwned::to_owned).collect())
+    }
+
+    pub fn is_directory(&self, path: &Path) -> Result<bool, ()> {
+        let path = path.to_str().unwrap();
+
+        let vfs = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        match vfs.get_entry_kind(path)? {
+            EntryKind::Value => Ok(false),
+            EntryKind::Folder => Ok(true),
+            EntryKind::Missing => return Err(()),
+        }
+    }
+
     pub fn insert_asset_text(&self, path: &Path, asset: &str) {
         self.insert_asset(path, asset.as_bytes().to_vec());
     }
 
-    /// Inserts textual data as asset metadata, at the `path` relative to this `Dir`.
-    pub fn insert_meta_text(&self, path: &Path, asset: &str) {
-        self.insert_meta(path, asset.as_bytes().to_vec());
+    pub fn insert_meta_text(&self, path: &Path, value: &str) {
+        self.insert_meta(path, value.as_bytes().to_vec());
     }
 
-    /// Inserts a [`Vec`] of bytes or a `'static` array of bytes as an asset,
-    /// at the `path` relative to this `Dir`.
     pub fn insert_asset(&self, path: &Path, value: impl Into<Value>) {
-        self.insert_asset_internal(path, value.into());
+        let path = path.to_str().unwrap();
+
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        let memory_asset = match vfs.get_value_mut(path) {
+            Ok(ValueMut::Present(memory_asset)) => memory_asset,
+            Ok(ValueMut::Missing(missing)) => missing.insert(MemoryAsset::default()),
+            Err(err) => panic!("Failed to find (or create) value entry: {err:?}"),
+        };
+
+        memory_asset.asset_bytes = Some(value.into());
     }
 
-    // Implements `insert_asset`, but with a non-generic `value` parameter. This
-    // stops the function from being duplicated many times by monomorphization.
-    fn insert_asset_internal(&self, path: &Path, value: Value) {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = self.get_or_insert_dir(parent);
-        }
-        dir.0
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .assets
-            .insert(
-                path.file_name().unwrap().to_string_lossy().into(),
-                Data {
-                    value,
-                    path: path.to_owned(),
-                },
-            );
+    pub fn remove_asset(&self, path: &Path) -> Option<Value> {
+        let path = path.to_str().unwrap();
+
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        let memory_asset = match vfs.get_value_mut(path) {
+            Ok(ValueMut::Present(memory_asset)) => memory_asset,
+            Ok(ValueMut::Missing(_)) => return None,
+            Err(err) => panic!("Failed to find value entry: {err:?}"),
+        };
+
+        memory_asset.asset_bytes.take()
     }
 
-    /// Removes the stored asset at `path`.
-    ///
-    /// Returns the [`Data`] stored if found, [`None`] otherwise.
-    pub fn remove_asset(&self, path: &Path) -> Option<Data> {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = self.get_or_insert_dir(parent);
-        }
-        let key: Box<str> = path.file_name().unwrap().to_string_lossy().into();
-        dir.0
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .assets
-            .remove(&key)
-    }
-
-    /// Inserts a [`Vec`] of bytes or a `'static` array of bytes as asset metadata,
-    /// at the `path` relative to this `Dir`.
     pub fn insert_meta(&self, path: &Path, value: impl Into<Value>) {
-        self.insert_meta_internal(path, value.into());
+        let path = path.to_str().unwrap();
+
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        let memory_asset = match vfs.get_value_mut(path) {
+            Ok(ValueMut::Present(memory_asset)) => memory_asset,
+            Ok(ValueMut::Missing(missing)) => missing.insert(MemoryAsset::default()),
+            Err(err) => panic!("Failed to find value (or create) value entry: {err:?}"),
+        };
+
+        memory_asset.meta_bytes = Some(value.into());
     }
 
-    // Implements `insert_meta` - see `insert_asset_internal` for rationale.
-    fn insert_meta_internal(&self, path: &Path, value: Value) {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = self.get_or_insert_dir(parent);
+    pub fn remove_metadata(&self, path: &Path) -> Option<Value> {
+        let path = path.to_str().unwrap();
+
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        let memory_asset = match vfs.get_value_mut(path) {
+            Ok(ValueMut::Present(memory_asset)) => memory_asset,
+            Ok(ValueMut::Missing(_)) => return None,
+            Err(err) => panic!("Failed to find value entry: {err:?}"),
+        };
+
+        memory_asset.meta_bytes.take()
+    }
+
+    pub fn create_dir(&self, path: &Path) {
+        let path = path.to_str().unwrap();
+
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        vfs.create_directory(path).unwrap();
+    }
+
+    pub fn remove_dir(&self, path: &Path) {
+        let path = path.to_str().unwrap();
+        let mut vfs = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        if vfs.get_value(path).is_ok() {
+            return;
         }
-        dir.0
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .metadata
-            .insert(
-                path.file_name().unwrap().to_string_lossy().into(),
-                Data {
-                    value,
-                    path: path.to_owned(),
-                },
-            );
-    }
-
-    /// Removes the stored metadata at `path`.
-    ///
-    /// Returns the [`Data`] stored if found, [`None`] otherwise.
-    pub fn remove_metadata(&self, path: &Path) -> Option<Data> {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = self.get_or_insert_dir(parent);
-        }
-        let key: Box<str> = path.file_name().unwrap().to_string_lossy().into();
-        dir.0
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .metadata
-            .remove(&key)
-    }
-
-    /// Returns the `Dir` representing `path` relative to this `Dir`,
-    /// creating a new one for it if necessary.
-    pub fn get_or_insert_dir(&self, path: &Path) -> Dir {
-        let mut dir = self.clone();
-        let mut full_path = PathBuf::new();
-        for c in path.components() {
-            full_path.push(c);
-            let name = c.as_os_str().to_string_lossy().into();
-            dir = {
-                let dirs = &mut dir.0.write().unwrap_or_else(PoisonError::into_inner).dirs;
-                dirs.entry(name)
-                    .or_insert_with(|| Dir::new(full_path.clone()))
-                    .clone()
-            };
-        }
-
-        dir
-    }
-
-    /// Removes the dir at `path`.
-    ///
-    /// Returns the [`Dir`] stored if found, [`None`] otherwise.
-    pub fn remove_dir(&self, path: &Path) -> Option<Dir> {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = self.get_or_insert_dir(parent);
-        }
-        let key: Box<str> = path.file_name().unwrap().to_string_lossy().into();
-        dir.0
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .dirs
-            .remove(&key)
-    }
-
-    /// Returns the `Dir` representing `path` relative to this `Dir`, if it exists.
-    pub fn get_dir(&self, path: &Path) -> Option<Dir> {
-        let mut dir = self.clone();
-        for p in path.components() {
-            let component = p.as_os_str().to_str().unwrap();
-            let next_dir = dir
-                .0
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .dirs
-                .get(component)?
-                .clone();
-            dir = next_dir;
-        }
-        Some(dir)
-    }
-
-    /// Returns the asset stored at `path` relative to this `Dir`, if it exists.
-    pub fn get_asset(&self, path: &Path) -> Option<Data> {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = dir.get_dir(parent)?;
-        }
-
-        path.file_name().and_then(|f| {
-            dir.0
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .assets
-                .get(f.to_str().unwrap())
-                .cloned()
-        })
-    }
-
-    /// Returns the asset metadata stored at `path` relative to this `Dir`, if it exists.
-    pub fn get_metadata(&self, path: &Path) -> Option<Data> {
-        let mut dir = self.clone();
-        if let Some(parent) = path.parent() {
-            dir = dir.get_dir(parent)?;
-        }
-
-        path.file_name().and_then(|f| {
-            dir.0
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .metadata
-                .get(f.to_str().unwrap())
-                .cloned()
-        })
-    }
-
-    /// Returns the path represented by this `Dir`.
-    pub fn path(&self) -> PathBuf {
-        self.0
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .path
-            .to_owned()
-    }
-}
-
-/// A struct for iteration over subdirectory and asset paths of a [`Dir`].
-/// It will return full pathnames.
-pub struct DirStream {
-    dir: Dir,
-    index: usize,
-    dir_index: usize,
-}
-
-impl DirStream {
-    fn new(dir: Dir) -> Self {
-        Self {
-            dir,
-            index: 0,
-            dir_index: 0,
-        }
-    }
-}
-
-impl Stream for DirStream {
-    type Item = PathBuf;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _cx: &mut core::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        let dir = this.dir.0.read().unwrap_or_else(PoisonError::into_inner);
-
-        let dir_index = this.dir_index;
-        if let Some(dir_path) = dir
-            .dirs
-            .keys()
-            .nth(dir_index)
-            .map(|d| dir.path.join(d.as_ref()))
-        {
-            this.dir_index += 1;
-            Poll::Ready(Some(dir_path))
-        } else {
-            let index = this.index;
-            this.index += 1;
-            Poll::Ready(dir.assets.values().nth(index).map(|d| d.path().to_owned()))
-        }
+        vfs.delete_entry(path).unwrap();
     }
 }
 
 /// In-memory [`AssetReader`] implementation.
 ///
 /// This is primarily used by unit tests and the [`embedded`](super::embedded) backend.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct MemoryAssetReader {
     /// The root of the in-memory filesystem backing this asset reader.
-    pub root: Dir,
+    pub root: MemoryAssetFilesystem,
 }
 
 /// In-memory [`AssetWriter`] implementation.
 ///
 /// This is primarily used by unit tests and the [`embedded`](super::embedded) backend.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct MemoryAssetWriter {
     /// The root of the in-memory filesystem backing this asset writer.
-    pub root: Dir,
-}
-
-/// Asset data stored in a [`Dir`].
-#[derive(Clone, Debug)]
-pub struct Data {
-    path: PathBuf,
-    value: Value,
+    pub root: MemoryAssetFilesystem,
 }
 
 /// Stores either an allocated vec of bytes or a static array of bytes.
@@ -591,21 +514,6 @@ pub struct Data {
 pub enum Value {
     Vec(Arc<Vec<u8>>),
     Static(&'static [u8]),
-}
-
-impl Data {
-    /// The path that this data was written to.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// The value in bytes that was written here.
-    pub fn value(&self) -> &[u8] {
-        match &self.value {
-            Value::Vec(vec) => vec,
-            Value::Static(value) => value,
-        }
-    }
 }
 
 impl From<Vec<u8>> for Value {
@@ -626,12 +534,21 @@ impl<const N: usize> From<&'static [u8; N]> for Value {
     }
 }
 
-struct DataReader {
-    data: Data,
+impl Value {
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Static(bytes) => bytes,
+            Self::Vec(bytes) => bytes,
+        }
+    }
+}
+
+struct ValueReader {
+    value: Value,
     bytes_read: usize,
 }
 
-impl AsyncRead for DataReader {
+impl AsyncRead for ValueReader {
     fn poll_read(
         self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
@@ -640,14 +557,14 @@ impl AsyncRead for DataReader {
         // Get the mut borrow to avoid trying to borrow the pin itself multiple times.
         let this = self.get_mut();
         Poll::Ready(Ok(crate::io::slice_read(
-            this.data.value(),
+            this.value.bytes(),
             &mut this.bytes_read,
             buf,
         )))
     }
 }
 
-impl AsyncSeek for DataReader {
+impl AsyncSeek for ValueReader {
     fn poll_seek(
         self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
@@ -656,19 +573,19 @@ impl AsyncSeek for DataReader {
         // Get the mut borrow to avoid trying to borrow the pin itself multiple times.
         let this = self.get_mut();
         Poll::Ready(crate::io::slice_seek(
-            this.data.value(),
+            this.value.bytes(),
             &mut this.bytes_read,
             pos,
         ))
     }
 }
 
-impl Reader for DataReader {
+impl Reader for ValueReader {
     fn read_to_end<'a>(
         &'a mut self,
         buf: &'a mut Vec<u8>,
     ) -> stackfuture::StackFuture<'a, std::io::Result<usize>, { super::STACK_FUTURE_SIZE }> {
-        crate::io::read_to_end(self.data.value(), &mut self.bytes_read, buf)
+        crate::io::read_to_end(self.value.bytes(), &mut self.bytes_read, buf)
     }
 
     fn seekable(&mut self) -> Result<&mut dyn SeekableReader, ReaderNotSeekableError> {
@@ -676,49 +593,65 @@ impl Reader for DataReader {
     }
 }
 
+fn normalize_virtual_path_with_io_error(path: &Path) -> Result<PathBuf, Error> {
+    match VirtualFilesystem::<()>::path_to_virtual_path(path) {
+        Ok(path) => Ok(PathBuf::from(path)),
+        Err(err) => Err(Error::new(ErrorKind::InvalidFilename, format!("{err:?}"))),
+    }
+}
+
 impl AssetReader for MemoryAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        self.root
-            .get_asset(path)
-            .map(|data| DataReader {
-                data,
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        match self.root.get_asset(&virtual_path) {
+            Some(value) => Ok(ValueReader {
+                value,
                 bytes_read: 0,
-            })
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
+            }),
+            None => Err(AssetReaderError::NotFound(path.to_path_buf())),
+        }
     }
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        self.root
-            .get_metadata(path)
-            .map(|data| DataReader {
-                data,
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        match self.root.get_metadata(&virtual_path) {
+            Some(value) => Ok(ValueReader {
+                value,
                 bytes_read: 0,
-            })
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
+            }),
+            None => Err(AssetReaderError::NotFound(path.to_path_buf())),
+        }
     }
 
     async fn read_directory<'a>(
         &'a self,
         path: &'a Path,
     ) -> Result<Box<PathStream>, AssetReaderError> {
-        self.root
-            .get_dir(path)
-            .map(|dir| {
-                let stream: Box<PathStream> = Box::new(DirStream::new(dir));
-                stream
-            })
-            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        match self.root.get_children(&virtual_path) {
+            Ok(children) => Ok(Box::new(futures_util::stream::iter(
+                children
+                    .into_iter()
+                    .map(|child_name| path.join(child_name))
+                    .collect::<Vec<_>>(),
+            ))),
+            Err(()) => Err(AssetReaderError::Io(todo!())),
+        }
     }
 
     async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
-        Ok(self.root.get_dir(path).is_some())
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        match self.root.is_directory(&virtual_path) {
+            Ok(is_directory) => Ok(is_directory),
+            Err(err) => Err(AssetReaderError::Io(todo!())),
+        }
     }
 }
 
 /// A writer that writes into [`Dir`], buffering internally until flushed/closed.
 struct DataWriter {
-    /// The dir to write to.
-    dir: Dir,
+    /// The filesystem to write to.
+    fs: MemoryAssetFilesystem,
     /// The path to write to.
     path: PathBuf,
     /// The current buffer of data.
@@ -745,9 +678,9 @@ impl AsyncWrite for DataWriter {
     ) -> Poll<std::io::Result<()>> {
         // Write the data to our fake disk. This means we will repeatedly reinsert the asset.
         if self.is_meta_writer {
-            self.dir.insert_meta(&self.path, self.current_data.clone());
+            self.fs.insert_meta(&self.path, self.current_data.clone());
         } else {
-            self.dir.insert_asset(&self.path, self.current_data.clone());
+            self.fs.insert_asset(&self.path, self.current_data.clone());
         }
         Poll::Ready(Ok(()))
     }
@@ -763,9 +696,10 @@ impl AsyncWrite for DataWriter {
 
 impl AssetWriter for MemoryAssetWriter {
     async fn write<'a>(&'a self, path: &'a Path) -> Result<Box<super::Writer>, AssetWriterError> {
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
         Ok(Box::new(DataWriter {
-            dir: self.root.clone(),
-            path: path.to_owned(),
+            fs: self.root.clone(),
+            path: virtual_path,
             current_data: vec![],
             is_meta_writer: false,
         }))
@@ -775,26 +709,26 @@ impl AssetWriter for MemoryAssetWriter {
         &'a self,
         path: &'a Path,
     ) -> Result<Box<super::Writer>, AssetWriterError> {
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
         Ok(Box::new(DataWriter {
-            dir: self.root.clone(),
-            path: path.to_owned(),
+            fs: self.root.clone(),
+            path: virtual_path,
             current_data: vec![],
             is_meta_writer: true,
         }))
     }
 
     async fn remove<'a>(&'a self, path: &'a Path) -> Result<(), AssetWriterError> {
-        if self.root.remove_asset(path).is_none() {
-            return Err(AssetWriterError::Io(Error::new(
-                ErrorKind::NotFound,
-                "no such file",
-            )));
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        match self.root.remove_asset(&virtual_path) {
+            Some(_) => Ok(()),
+            None => todo!(),
         }
-        Ok(())
     }
 
     async fn remove_meta<'a>(&'a self, path: &'a Path) -> Result<(), AssetWriterError> {
-        self.root.remove_metadata(path);
+        let virtual_path = normalize_virtual_path_with_io_error(path)?;
+        self.root.remove_metadata(&virtual_path);
         Ok(())
     }
 
@@ -809,7 +743,7 @@ impl AssetWriter for MemoryAssetWriter {
                 "no such file",
             )));
         };
-        self.root.insert_asset(new_path, old_asset.value);
+        self.root.insert_asset(new_path, old_asset);
         // Remove the asset after instead of before since otherwise there'd be a moment where the
         // Dir is unlocked and missing both the old and new paths. This just prevents race
         // conditions.
@@ -828,7 +762,7 @@ impl AssetWriter for MemoryAssetWriter {
                 "no such file",
             )));
         };
-        self.root.insert_meta(new_path, old_meta.value);
+        self.root.insert_meta(new_path, old_meta);
         // Remove the meta after instead of before since otherwise there'd be a moment where the
         // Dir is unlocked and missing both the old and new paths. This just prevents race
         // conditions.
@@ -894,12 +828,13 @@ impl AssetWriter for MemoryAssetWriter {
 
 #[cfg(test)]
 mod test {
-    use super::Dir;
+    use crate::io::memory::MemoryAssetFilesystem;
+
     use std::path::Path;
 
     #[test]
     fn memory_dir() {
-        let dir = Dir::default();
+        let dir = MemoryAssetFilesystem::default();
         let a_path = Path::new("a.txt");
         let a_data = "a".as_bytes().to_vec();
         let a_meta = "ameta".as_bytes().to_vec();

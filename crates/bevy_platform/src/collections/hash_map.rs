@@ -29,7 +29,7 @@ pub use {
 // Additional items from `hashbrown`
 pub use hb::{
     EntryRef, ExtractIf, OccupiedError, RawEntryBuilder, RawEntryBuilderMut, RawEntryMut,
-    RawOccupiedEntryMut,
+    RawOccupiedEntryMut, VacantEntryRef,
 };
 
 /// Shortcut for [`Entry`](hb::Entry) with [`FixedHasher`] as the default hashing provider.
