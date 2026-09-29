@@ -7,6 +7,7 @@ use alloc::{
     vec::Vec,
 };
 use async_lock::{RwLock, RwLockWriteGuard};
+use atomicow::CowArc;
 use bevy_platform::{
     collections::HashMap,
     sync::{Mutex, PoisonError},
@@ -199,25 +200,31 @@ impl<R: AssetReader> LockGatedReader<R> {
 }
 
 impl<R: AssetReader> AssetReader for LockGatedReader<R> {
-    async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+    async fn read<'a>(
+        &'a self,
+        path: CowArc<'a, Path>,
+    ) -> Result<impl Reader + 'a, AssetReaderError> {
         let _guard = self.gate.read().await;
         self.reader.read(path).await
     }
 
-    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+    async fn read_meta<'a>(
+        &'a self,
+        path: CowArc<'a, Path>,
+    ) -> Result<impl Reader + 'a, AssetReaderError> {
         let _guard = self.gate.read().await;
         self.reader.read_meta(path).await
     }
 
     async fn read_directory<'a>(
         &'a self,
-        path: &'a Path,
+        path: CowArc<'a, Path>,
     ) -> Result<Box<PathStream>, AssetReaderError> {
         let _guard = self.gate.read().await;
         self.reader.read_directory(path).await
     }
 
-    async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
+    async fn is_directory<'a>(&'a self, path: CowArc<'a, Path>) -> Result<bool, AssetReaderError> {
         let _guard = self.gate.read().await;
         self.reader.is_directory(path).await
     }

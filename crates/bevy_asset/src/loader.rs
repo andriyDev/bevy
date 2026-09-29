@@ -620,11 +620,13 @@ impl<'a> LoadContext<'a> {
             AssetServerMode::Unprocessed => source.reader(),
             AssetServerMode::Processed => source.processed_reader()?,
         };
-        let mut reader = asset_reader.read(path.path()).await?;
+        let mut reader = asset_reader.read(CowArc::Borrowed(path.path())).await?;
         let hash = if self.populate_hashes {
             // NOTE: ensure meta is read while the asset bytes reader is still active to ensure transactionality
             // See `ProcessorGatedReader` for more info
-            let meta_bytes = asset_reader.read_meta_bytes(path.path()).await?;
+            let meta_bytes = asset_reader
+                .read_meta_bytes(CowArc::Borrowed(path.path()))
+                .await?;
             let minimal: ProcessedInfoMinimal = ron::de::from_bytes(&meta_bytes)
                 .map_err(DeserializeMetaError::DeserializeMinimal)?;
             let processed_info = minimal

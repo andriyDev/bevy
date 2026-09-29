@@ -41,6 +41,7 @@ mod log;
 mod process;
 
 use async_lock::RwLockReadGuardArc;
+use atomicow::CowArc;
 pub use log::*;
 pub use process::*;
 
@@ -463,7 +464,7 @@ impl AssetProcessor {
         // file for the unprocessed version of that asset (so it will be processed by the default
         // processor).
         let reader = source.reader();
-        match reader.read_meta_bytes(path.path()).await {
+        match reader.read_meta_bytes(CowArc::Borrowed(path.path())).await {
             Ok(_) => return Err(WriteDefaultMetaError::MetaAlreadyExists),
             Err(AssetReaderError::NotFound(_)) => {
                 // The meta file couldn't be found so just fall through.
@@ -552,7 +553,7 @@ impl AssetProcessor {
             }
             AssetSourceEvent::RemovedUnknown { path, is_meta } => {
                 let processed_reader = source.ungated_processed_reader().unwrap();
-                match processed_reader.is_directory(&path).await {
+                match processed_reader.is_directory(CowArc::Borrowed(&path)).await {
                     Ok(is_directory) => {
                         if is_directory {
                             self.handle_removed_folder(source, &path).await;
@@ -629,7 +630,10 @@ impl AssetProcessor {
             path.display()
         );
         let processed_reader = source.ungated_processed_reader().unwrap();
-        match processed_reader.read_directory(path).await {
+        match processed_reader
+            .read_directory(CowArc::Borrowed(path))
+            .await
+        {
             Ok(mut path_stream) => {
                 while let Some(child_path) = path_stream.next().await {
                     self.handle_removed_asset(source, child_path).await;
@@ -731,8 +735,15 @@ impl AssetProcessor {
         path: PathBuf,
         new_task_sender: &async_channel::Sender<(AssetSourceId<'static>, PathBuf)>,
     ) -> Result<(), AssetReaderError> {
-        if source.reader().is_directory(&path).await? {
-            let mut path_stream = source.reader().read_directory(&path).await?;
+        if source
+            .reader()
+            .is_directory(CowArc::Borrowed(&path))
+            .await?
+        {
+            let mut path_stream = source
+                .reader()
+                .read_directory(CowArc::Borrowed(&path))
+                .await?;
             while let Some(path) = path_stream.next().await {
                 Box::pin(self.queue_processing_tasks_for_folder(source, path, new_task_sender))
                     .await?;
@@ -847,8 +858,8 @@ impl AssetProcessor {
             paths: &mut Vec<PathBuf>,
             mut empty_dirs: Option<&mut Vec<PathBuf>>,
         ) -> Result<bool, AssetReaderError> {
-            if reader.is_directory(&path).await? {
-                let mut path_stream = reader.read_directory(&path).await?;
+            if reader.is_directory(CowArc::Borrowed(&path)).await? {
+                let mut path_stream = reader.read_directory(CowArc::Borrowed(&path)).await?;
                 let mut contains_files = false;
 
                 while let Some(child_path) = path_stream.next().await {
@@ -919,7 +930,10 @@ impl AssetProcessor {
                 let mut dependencies = Vec::new();
                 let asset_path = AssetPath::from(path).with_source(source.id());
                 if let Some(info) = asset_infos.get_mut(&asset_path) {
-                    match processed_reader.read_meta_bytes(asset_path.path()).await {
+                    match processed_reader
+                        .read_meta_bytes(CowArc::Borrowed(asset_path.path()))
+                        .await
+                    {
                         Ok(meta_bytes) => {
                             match ron::de::from_bytes::<ProcessedInfoMinimal>(&meta_bytes) {
                                 Ok(minimal) => {
@@ -1050,7 +1064,10 @@ impl AssetProcessor {
             err,
         };
 
-        let (mut source_meta, meta_bytes, processor) = match reader.read_meta_bytes(path).await {
+        let (mut source_meta, meta_bytes, processor) = match reader
+            .read_meta_bytes(CowArc::Borrowed(path))
+            .await
+        {
             Ok(meta_bytes) => {
                 let minimal: AssetMetaMinimal = ron::de::from_bytes(&meta_bytes).map_err(|e| {
                     ProcessError::DeserializeMetaError(DeserializeMetaError::DeserializeMinimal(e))
@@ -1108,7 +1125,10 @@ impl AssetProcessor {
         let new_hash = {
             // Create a reader just for computing the hash. Keep this scoped here so that we drop it
             // as soon as the hash is computed.
-            let mut reader_for_hash = reader.read(path).await.map_err(reader_err)?;
+            let mut reader_for_hash = reader
+                .read(CowArc::Borrowed(path))
+                .await
+                .map_err(reader_err)?;
 
             get_asset_hash(&meta_bytes, &mut reader_for_hash)
                 .await
@@ -1176,7 +1196,10 @@ impl AssetProcessor {
             // it's not likely to be too big a deal. If in the future, we decide we want to avoid
             // this repeated read, we could "ask" the asset source if it prefers avoiding repeated
             // reads or not.
-            let reader_for_process = reader.read(path).await.map_err(reader_err)?;
+            let reader_for_process = reader
+                .read(CowArc::Borrowed(path))
+                .await
+                .map_err(reader_err)?;
 
             let mut writer = processed_writer.write(path).await.map_err(writer_err)?;
             let mut processed_meta = {
@@ -1224,7 +1247,10 @@ impl AssetProcessor {
                 .map_err(writer_err)?;
         } else {
             // See the reasoning for processing why it's ok to do a second read here.
-            let mut reader_for_copy = reader.read(path).await.map_err(reader_err)?;
+            let mut reader_for_copy = reader
+                .read(CowArc::Borrowed(path))
+                .await
+                .map_err(reader_err)?;
             let mut writer = processed_writer.write(path).await.map_err(writer_err)?;
             futures_lite::io::copy(&mut reader_for_copy, &mut writer)
                 .await

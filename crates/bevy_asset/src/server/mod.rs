@@ -970,11 +970,11 @@ impl AssetServer {
             server: &'a AssetServer,
             handles: &'a mut Vec<UntypedHandle>,
         ) -> Result<(), AssetLoadError> {
-            let is_dir = reader.is_directory(path).await?;
+            let is_dir = reader.is_directory(CowArc::Borrowed(path)).await?;
             if is_dir {
-                let mut path_stream = reader.read_directory(path.as_ref()).await?;
+                let mut path_stream = reader.read_directory(CowArc::Borrowed(path)).await?;
                 while let Some(child_path) = path_stream.next().await {
-                    if reader.is_directory(&child_path).await? {
+                    if reader.is_directory(CowArc::Borrowed(&child_path)).await? {
                         Box::pin(load_folder(
                             source.clone(),
                             &child_path,
@@ -1406,7 +1406,10 @@ impl AssetServer {
         let mut meta_reader;
 
         let (meta, loader) = if read_meta {
-            match asset_reader.read_meta(asset_path.path()).await {
+            match asset_reader
+                .read_meta(CowArc::Borrowed(asset_path.path()))
+                .await
+            {
                 Ok(new_meta_reader) => {
                     meta_reader = new_meta_reader;
                     let mut meta_bytes = vec![];
@@ -1474,7 +1477,9 @@ impl AssetServer {
             let meta = loader.default_meta();
             (meta, loader)
         };
-        let reader = asset_reader.read(asset_path.path()).await?;
+        let reader = asset_reader
+            .read(CowArc::Borrowed(asset_path.path()))
+            .await?;
         Ok((meta, loader, reader))
     }
 
@@ -1669,7 +1674,7 @@ impl AssetServer {
         let source = self.get_source(path.source())?;
 
         let reader = source.reader();
-        match reader.read_meta_bytes(path.path()).await {
+        match reader.read_meta_bytes(CowArc::Borrowed(path.path())).await {
             Ok(_) => return Err(WriteDefaultMetaError::MetaAlreadyExists),
             Err(AssetReaderError::NotFound(_)) => {
                 // The meta file couldn't be found so just fall through.
