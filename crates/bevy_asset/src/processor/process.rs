@@ -379,6 +379,9 @@ impl<'a> ProcessContext<'a> {
         Ok(loaded_asset)
     }
 
+    /// Reads an asset path from the source reader.
+    pub async fn read_asset_from_source<'a>(&mut self, path: impl Into<AssetPath<'a>>) -> Result {}
+
     /// The path of the asset being processed.
     #[inline]
     pub fn path(&self) -> &AssetPath<'static> {
