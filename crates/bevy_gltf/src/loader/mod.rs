@@ -7,7 +7,7 @@ use async_lock::RwLock;
 use bevy_animation::{prelude::*, AnimatedBy, AnimationTargetId};
 use bevy_asset::{
     io::Reader, AssetLoadError, AssetLoader, AssetPath, Handle, LoadContext, ParseAssetPathError,
-    ReadAssetBytesError, RenderAssetUsages,
+    ReadAssetError, RenderAssetUsages,
 };
 use bevy_camera::{
     primitives::Aabb,
@@ -116,7 +116,7 @@ pub enum GltfError {
     InvalidImageUri(String, ParseAssetPathError),
     /// Failed to read bytes from an asset path.
     #[error("failed to read bytes from an asset path: {0}")]
-    ReadAssetBytesError(#[from] ReadAssetBytesError),
+    ReadAssetBytesError(#[from] ReadAssetError),
     /// Failed to load asset from an asset path.
     #[error("failed to load asset from an asset path: {0}")]
     AssetLoadError(#[from] AssetLoadError),
@@ -1939,7 +1939,10 @@ async fn load_buffers(
                             .path()
                             .resolve_embed_str(uri)
                             .map_err(|err| GltfError::InvalidBufferUri(uri.to_owned(), err))?;
-                        load_context.read_asset_bytes(buffer_path).await?
+                        let mut reader = load_context.read_asset(buffer_path).await?;
+                        let mut buf = vec![];
+                        reader.read_to_end(&mut buf).await?;
+                        buf
                     }
                 };
                 buffer_data.push(buffer_bytes);
