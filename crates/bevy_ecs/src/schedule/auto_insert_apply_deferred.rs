@@ -4,7 +4,7 @@ use bevy_platform::{collections::HashMap, hash::FixedHasher};
 use indexmap::IndexSet;
 
 use crate::{
-    schedule::{FlattenedDependencies, SystemKey, SystemSetKey},
+    schedule::{pass::ScheduleRng, FlattenedDependencies, SystemKey, SystemSetKey},
     system::{IntoSystem, System},
     world::World,
 };
@@ -72,6 +72,7 @@ impl ScheduleBuildPass for AutoInsertApplyDeferredPass {
         _world: &mut World,
         graph: &mut ScheduleGraph,
         mut dependency_flattened: FlattenedDependencies<'_>,
+        _schedule_rng: Option<ScheduleRng<'_>>,
     ) -> Result<(), ScheduleBuildError> {
         let (topo, flat_dependency) = dependency_flattened
             .toposort_and_graph()

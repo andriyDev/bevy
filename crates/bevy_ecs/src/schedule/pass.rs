@@ -1,5 +1,11 @@
 use alloc::vec::Vec;
+#[cfg(feature = "debug")]
+use core::convert::Infallible;
+#[cfg(not(feature = "debug"))]
+use core::marker::PhantomData;
 use core::{fmt::Debug, ops::Deref};
+#[cfg(feature = "debug")]
+use rand::{Rng, TryRng};
 
 use bevy_platform::{collections::HashSet, hash::FixedHasher};
 use indexmap::IndexSet;
@@ -29,11 +35,16 @@ pub trait ScheduleBuildPass: Send + Sync + Debug + 'static {
     ) -> impl Iterator<Item = (NodeId, NodeId)>;
 
     /// The implementation will be able to modify the `ScheduleGraph` here.
+    ///
+    /// This function takes the [`ScheduleRng`] if schedule randomization is enabled (through
+    /// `ScheduleBuildSettings::shuffle_seed`, which is only compiled when `bevy_ecs/debug` feature
+    /// is enabled). If `bevy_ecs/debug` feature is not enabled, `schedule_rng` is always [`None`].
     fn build(
         &mut self,
         world: &mut World,
         graph: &mut ScheduleGraph,
         dependency_flattened: FlattenedDependencies<'_>,
+        schedule_rng: Option<ScheduleRng<'_>>,
     ) -> Result<(), ScheduleBuildError>;
 }
 
@@ -103,6 +114,33 @@ impl FlattenedDependencies<'_> {
     }
 }
 
+/// A wrapper around a `rand::Rng`, conditional on being compiled with the `debug` feature.
+///
+/// This avoids us needing a public dependency on the `rand` crate unless `debug` is enabled. This
+/// type just forwards to the underlying `rand::Rng` implementation (if enabled). Users can use
+/// [`crate::cfg::debug`] to conditionally compile code if this type implements `rand` traits.
+pub struct ScheduleRng<'a>(
+    #[cfg(feature = "debug")] pub(crate) &'a mut dyn Rng,
+    #[cfg(not(feature = "debug"))] pub(crate) PhantomData<&'a mut ()>,
+);
+
+#[cfg(feature = "debug")]
+impl TryRng for ScheduleRng<'_> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        self.0.try_next_u32()
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        self.0.try_next_u64()
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.try_fill_bytes(dst)
+    }
+}
+
 /// Object safe version of [`ScheduleBuildPass`].
 pub(super) trait ScheduleBuildPassObj: Send + Sync + Debug {
     fn build(
@@ -110,6 +148,7 @@ pub(super) trait ScheduleBuildPassObj: Send + Sync + Debug {
         world: &mut World,
         graph: &mut ScheduleGraph,
         dependency_flattened: FlattenedDependencies<'_>,
+        schedule_rng: Option<ScheduleRng<'_>>,
     ) -> Result<(), ScheduleBuildError>;
 
     fn collapse_set(
@@ -128,8 +167,9 @@ impl<T: ScheduleBuildPass> ScheduleBuildPassObj for T {
         world: &mut World,
         graph: &mut ScheduleGraph,
         dependency_flattened: FlattenedDependencies<'_>,
+        schedule_rng: Option<ScheduleRng<'_>>,
     ) -> Result<(), ScheduleBuildError> {
-        self.build(world, graph, dependency_flattened)
+        self.build(world, graph, dependency_flattened, schedule_rng)
     }
     fn collapse_set(
         &mut self,

@@ -1327,6 +1327,14 @@ impl ScheduleGraph {
                     }
                 });
 
+        #[cfg(feature = "debug")]
+        let mut rng = self
+            .settings
+            .shuffle_seed
+            // There's nothing special about this Rng implementation, other than the fact that it is
+            // not feature-gated.
+            .map(rand::rngs::Xoshiro128PlusPlus::seed_from_u64);
+
         // Allow modification of the schedule graph by build passes.
         let mut passes = core::mem::take(&mut self.passes);
         let mut added_edges = Default::default();
@@ -1338,6 +1346,13 @@ impl ScheduleGraph {
                     dag: &mut flat_dependency,
                     added_edges: &mut added_edges,
                 },
+                crate::cfg::debug! {
+                    if {
+                        rng.as_mut().map(|rng| pass::ScheduleRng(rng))
+                    } else {
+                        None
+                    }
+                },
             )?;
         }
         self.passes = passes;
@@ -1347,11 +1362,7 @@ impl ScheduleGraph {
         self.initialize(world);
 
         #[cfg(feature = "debug")]
-        if let Some(shuffle_seed) = self.settings.shuffle_seed {
-            // There's nothing special about this Rng implementation, other than the fact that it is
-            // not feature-gated.
-            let mut rng = rand::rngs::Xoshiro128PlusPlus::seed_from_u64(shuffle_seed);
-
+        if let Some(mut rng) = rng {
             let mut nodes = flat_dependency.graph().nodes().collect::<Vec<_>>();
             nodes.shuffle(&mut rng);
             let mut new_flat_dependency = Dag::new();
@@ -1995,9 +2006,9 @@ mod tests {
         error::{ignore, panic, FallbackErrorHandler, Result},
         prelude::{ApplyDeferred, IntoSystemSet, Res, Resource},
         schedule::{
-            passes::AutoInsertApplyDeferredPass, tests::ResMut, FlattenedDependencies,
-            IntoScheduleConfigs, MultiThreadedExecutor, Schedule, ScheduleBuildPass,
-            ScheduleBuildSettings, ScheduleCleanupPolicy, SystemSet,
+            pass::ScheduleRng, passes::AutoInsertApplyDeferredPass, tests::ResMut,
+            FlattenedDependencies, IntoScheduleConfigs, MultiThreadedExecutor, Schedule,
+            ScheduleBuildPass, ScheduleBuildSettings, ScheduleCleanupPolicy, SystemSet,
         },
         system::Commands,
         world::World,
@@ -2995,6 +3006,7 @@ mod tests {
                 _world: &mut World,
                 _graph: &mut super::ScheduleGraph,
                 _dependency_flattened: FlattenedDependencies<'_>,
+                _rng: Option<ScheduleRng<'_>>,
             ) -> core::result::Result<(), crate::schedule::ScheduleBuildError> {
                 Ok(())
             }

@@ -151,6 +151,21 @@ pub struct HotPatched;
 #[derive(resource::Resource, Default)]
 pub struct HotPatchChanges;
 
+/// Configuration information for this crate.
+pub mod cfg {
+    pub(crate) use bevy_platform::cfg::*;
+
+    define_alias! {
+        #[cfg(feature = "debug")] => {
+            /// Indicates that the `bevy_ecs/debug` feature is enabled.
+            ///
+            /// This indicates that A) system names will be printed (useful for conditioning tests),
+            /// and B) that schedule randomization may be used.
+            debug
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
