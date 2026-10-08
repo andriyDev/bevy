@@ -124,6 +124,9 @@ impl ScheduleBuildPass for AutoInsertApplyDeferredPass {
         // Keep track of any explicit sync nodes for a specific distance.
         let mut distance_to_explicit_sync_node: HashMap<u32, SystemKey> = HashMap::default();
 
+        #[cfg(feature = "debug")]
+        let mut max_distance = 0;
+
         // Determine the distance for every node and collect the explicit sync points.
         for &key in topo.iter() {
             let (node_distance, mut node_needs_sync) = distances_and_pending_sync
@@ -175,8 +178,15 @@ impl ScheduleBuildPass for AutoInsertApplyDeferredPass {
 
                 // The target cannot have fewer sync points in front of it than the preceding node.
                 *target_distance = (node_distance + weight).max(*target_distance);
+                #[cfg(feature = "debug")]
+                {
+                    max_distance = max_distance.max(*target_distance);
+                }
             }
         }
+
+        #[cfg(feature = "debug")]
+        if let Some(mut rng) = _schedule_rng {}
 
         // Find any edges which have a different number of sync points between them and make sure
         // there is a sync point between them.
