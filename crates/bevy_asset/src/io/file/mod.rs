@@ -7,9 +7,6 @@
 #[cfg(feature = "file_watcher")]
 mod file_watcher;
 
-#[cfg(feature = "multi_threaded")]
-mod file_asset;
-#[cfg(not(feature = "multi_threaded"))]
 pub(crate) mod sync_file_asset;
 
 #[cfg(feature = "file_watcher")]

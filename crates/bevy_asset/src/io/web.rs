@@ -233,7 +233,8 @@ mod web_asset_cache {
     use std::io;
     use std::path::PathBuf;
 
-    use crate::io::Reader;
+    use crate::io::file::sync_file_asset::GuardedFile;
+    use crate::io::{AssetReaderError, Reader};
 
     const CACHE_DIR: &str = ".web-asset-cache";
 
@@ -243,16 +244,12 @@ mod web_asset_cache {
         std::format!("{:x}", hasher.finish())
     }
 
-    pub async fn try_load_from_cache(url: &str) -> Result<Option<Vec<u8>>, io::Error> {
+    pub async fn try_load_from_cache(url: &str) -> Result<Option<Vec<u8>>, AssetReaderError> {
         let filename = url_to_hash(url);
         let cache_path = PathBuf::from(CACHE_DIR).join(&filename);
 
         if cache_path.exists() {
-            #[cfg(feature = "multi_threaded")]
-            let mut file = async_fs::File::open(&cache_path).await?;
-            #[cfg(not(feature = "multi_threaded"))]
-            let mut file =
-                crate::io::file::sync_file_asset::FileReader(std::fs::File::open(&cache_path)?);
+            let mut file = GuardedFile::open(&cache_path).await?;
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).await?;
             Ok(Some(buffer))

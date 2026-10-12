@@ -143,7 +143,6 @@ serialize = [
 ]
 multi_threaded = [
   "std",
-  "bevy_asset?/multi_threaded",
   "bevy_ecs/multi_threaded",
   "bevy_render?/multi_threaded",
   "bevy_tasks/multi_threaded",

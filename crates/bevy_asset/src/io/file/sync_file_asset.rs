@@ -1,5 +1,13 @@
+#[cfg(not(target_os = "windows"))]
+use async_io::Timer;
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "windows")))]
+use async_lock::Semaphore;
+#[cfg(not(target_os = "windows"))]
+use async_lock::SemaphoreGuard;
 use futures_io::{AsyncRead, AsyncWrite};
 use futures_lite::Stream;
+#[cfg(not(target_os = "windows"))]
+use futures_util::{future, pin_mut};
 
 use crate::io::{
     get_meta_path, AssetReader, AssetReaderError, AssetWriter, AssetWriterError, AsyncSeek,
@@ -7,6 +15,8 @@ use crate::io::{
 };
 
 use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
+#[cfg(not(target_os = "windows"))]
+use core::time::Duration;
 use core::{pin::Pin, task::Poll};
 use std::{
     fs::{read_dir, File},
@@ -16,54 +26,102 @@ use std::{
 
 use super::{FileAssetReader, FileAssetWriter};
 
-pub(crate) struct FileReader(pub(crate) File);
+// Set to OS default limit / 2
+// macos & ios: 256
+// linux & android: 1024
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+static OPEN_FILE_LIMITER: Semaphore = Semaphore::new(128);
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "windows")))]
+static OPEN_FILE_LIMITER: Semaphore = Semaphore::new(512);
 
-impl AsyncRead for FileReader {
+#[cfg(not(target_os = "windows"))]
+async fn maybe_get_semaphore() -> Option<SemaphoreGuard<'static>> {
+    let guard_future = OPEN_FILE_LIMITER.acquire();
+    let timeout_future = Timer::after(Duration::from_millis(500));
+    pin_mut!(guard_future);
+    pin_mut!(timeout_future);
+
+    match future::select(guard_future, timeout_future).await {
+        future::Either::Left((guard, _)) => Some(guard),
+        future::Either::Right((_, _)) => None,
+    }
+}
+
+pub struct GuardedFile {
+    file: File,
+    #[cfg(not(target_os = "windows"))]
+    _guard: Option<SemaphoreGuard<'static>>,
+}
+
+impl GuardedFile {
+    pub async fn open(path: &Path) -> Result<Self, AssetReaderError> {
+        #[cfg(not(target_os = "windows"))]
+        let guard = maybe_get_semaphore().await;
+
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(err) => {
+                return if err.kind() == std::io::ErrorKind::NotFound {
+                    Err(AssetReaderError::NotFound(path.to_path_buf()))
+                } else {
+                    Err(err.into())
+                };
+            }
+        };
+        Ok(Self {
+            file,
+            #[cfg(not(target_os = "windows"))]
+            _guard: guard,
+        })
+    }
+
+    pub async fn create(path: &Path) -> Result<Self, AssetWriterError> {
+        #[cfg(not(target_os = "windows"))]
+        let guard = maybe_get_semaphore().await;
+
+        let file = File::create(path)?;
+        Ok(Self {
+            file,
+            #[cfg(not(target_os = "windows"))]
+            _guard: guard,
+        })
+    }
+}
+
+impl AsyncRead for GuardedFile {
     fn poll_read(
         self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let read = this.0.read(buf);
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let read = self.get_mut().file.read(buf);
         Poll::Ready(read)
     }
 }
 
-impl AsyncSeek for FileReader {
+impl AsyncSeek for GuardedFile {
     fn poll_seek(
         mut self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
-        Poll::Ready(self.0.seek(pos))
+        Poll::Ready(self.file.seek(pos))
     }
 }
 
-impl Reader for FileReader {
-    fn read_to_end<'a>(
-        &'a mut self,
-        buf: &'a mut Vec<u8>,
-    ) -> stackfuture::StackFuture<'a, std::io::Result<usize>, { crate::io::STACK_FUTURE_SIZE }>
-    {
-        stackfuture::StackFuture::from(async { self.0.read_to_end(buf) })
-    }
-
+impl Reader for GuardedFile {
     fn seekable(&mut self) -> Result<&mut dyn SeekableReader, ReaderNotSeekableError> {
         Ok(self)
     }
 }
 
-struct FileWriter(File);
-
-impl AsyncWrite for FileWriter {
+impl AsyncWrite for GuardedFile {
     fn poll_write(
         self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let wrote = this.0.write(buf);
+        let wrote = self.get_mut().file.write(buf);
         Poll::Ready(wrote)
     }
 
@@ -71,8 +129,7 @@ impl AsyncWrite for FileWriter {
         self: Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        let flushed = this.0.flush();
+        let flushed = self.get_mut().file.flush();
         Poll::Ready(flushed)
     }
 
@@ -101,31 +158,13 @@ impl Stream for DirReader {
 impl AssetReader for FileAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let full_path = self.root_path.join(path);
-        match File::open(&full_path) {
-            Ok(file) => Ok(FileReader(file)),
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Err(AssetReaderError::NotFound(full_path))
-                } else {
-                    Err(e.into())
-                }
-            }
-        }
+        GuardedFile::open(&full_path).await
     }
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let meta_path = get_meta_path(path);
         let full_path = self.root_path.join(meta_path);
-        match File::open(&full_path) {
-            Ok(file) => Ok(FileReader(file)),
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Err(AssetReaderError::NotFound(full_path))
-                } else {
-                    Err(e.into())
-                }
-            }
-        }
+        GuardedFile::open(&full_path).await
     }
 
     async fn read_directory<'a>(
@@ -187,9 +226,8 @@ impl AssetWriter for FileAssetWriter {
         if let Some(parent) = full_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = File::create(&full_path)?;
-        let writer: Box<Writer> = Box::new(FileWriter(file));
-        Ok(writer)
+        let file = GuardedFile::create(&full_path).await?;
+        Ok(Box::new(file))
     }
 
     async fn write_meta<'a>(&'a self, path: &'a Path) -> Result<Box<Writer>, AssetWriterError> {
@@ -198,9 +236,8 @@ impl AssetWriter for FileAssetWriter {
         if let Some(parent) = full_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = File::create(&full_path)?;
-        let writer: Box<Writer> = Box::new(FileWriter(file));
-        Ok(writer)
+        let file = GuardedFile::create(&full_path).await?;
+        Ok(Box::new(file))
     }
 
     async fn remove<'a>(&'a self, path: &'a Path) -> Result<(), AssetWriterError> {
