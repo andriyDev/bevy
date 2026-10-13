@@ -5,12 +5,14 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use async_fs::File;
 use bevy_ecs::error::BevyError;
 use bevy_platform::collections::HashSet;
 use bevy_tasks::BoxedFuture;
-use futures_lite::{AsyncReadExt, AsyncWriteExt};
-use std::path::PathBuf;
+use std::{
+    fs::{create_dir_all, remove_file, File},
+    io::{ErrorKind, Read, Write},
+    path::PathBuf,
+};
 use thiserror::Error;
 use tracing::error;
 
@@ -134,10 +136,10 @@ impl ProcessorTransactionLogFactory for FileTransactionLogFactory {
         let path = self.file_path.clone();
         Box::pin(async move {
             let mut log_lines = Vec::new();
-            let mut file = match File::open(path).await {
+            let mut file = match File::open(path) {
                 Ok(file) => file,
                 Err(err) => {
-                    if err.kind() == futures_io::ErrorKind::NotFound {
+                    if err.kind() == ErrorKind::NotFound {
                         // if the log file doesn't exist, this is equivalent to an empty file
                         return Ok(log_lines);
                     }
@@ -145,7 +147,7 @@ impl ProcessorTransactionLogFactory for FileTransactionLogFactory {
                 }
             };
             let mut string = String::new();
-            file.read_to_string(&mut string).await?;
+            file.read_to_string(&mut string)?;
             for line in string.lines() {
                 if let Some(path_str) = line.strip_prefix(ENTRY_BEGIN) {
                     log_lines.push(LogEntry::BeginProcessing(
@@ -170,22 +172,22 @@ impl ProcessorTransactionLogFactory for FileTransactionLogFactory {
     ) -> BoxedFuture<'_, Result<Box<dyn ProcessorTransactionLog>, BevyError>> {
         let path = self.file_path.clone();
         Box::pin(async move {
-            match async_fs::remove_file(&path).await {
+            match remove_file(&path) {
                 Ok(_) => { /* successfully removed file */ }
                 Err(err) => {
                     // if the log file is not found, we assume we are starting in a fresh (or good) state
-                    if err.kind() != futures_io::ErrorKind::NotFound {
+                    if err.kind() != ErrorKind::NotFound {
                         error!("Failed to remove previous log file {}", err);
                     }
                 }
             }
 
             if let Some(parent_folder) = path.parent() {
-                async_fs::create_dir_all(parent_folder).await?;
+                create_dir_all(parent_folder)?;
             }
 
             Ok(Box::new(FileProcessorTransactionLog {
-                log_file: File::create(path).await?,
+                log_file: File::create(path)?,
             }) as _)
         })
     }
@@ -204,8 +206,8 @@ struct FileProcessorTransactionLog {
 impl FileProcessorTransactionLog {
     /// Write `line` to the file and flush it.
     async fn write(&mut self, line: &str) -> Result<(), BevyError> {
-        self.log_file.write_all(line.as_bytes()).await?;
-        self.log_file.flush().await?;
+        self.log_file.write_all(line.as_bytes())?;
+        self.log_file.flush()?;
         Ok(())
     }
 }
