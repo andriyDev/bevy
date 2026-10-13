@@ -225,16 +225,15 @@ impl AssetReader for WebAssetReader {
 /// It should eventually be replaced by `http-cache` or similar, see [tracking issue](https://github.com/06chaynes/http-cache/issues/91)
 #[cfg(all(not(target_arch = "wasm32"), feature = "web_asset_cache"))]
 mod web_asset_cache {
-    use alloc::string::String;
-    use alloc::vec::Vec;
+    use alloc::{string::String, sync::Arc, vec::Vec};
     use core::hash::{Hash, Hasher};
     use futures_lite::AsyncWriteExt;
     use std::collections::hash_map::DefaultHasher;
-    use std::io;
+    use std::fs::create_dir_all;
     use std::path::PathBuf;
 
     use crate::io::file::sync_file_asset::GuardedFile;
-    use crate::io::{AssetReaderError, Reader};
+    use crate::io::{AssetReaderError, AssetWriterError, Reader};
 
     const CACHE_DIR: &str = ".web-asset-cache";
 
@@ -258,13 +257,17 @@ mod web_asset_cache {
         }
     }
 
-    pub async fn save_to_cache(url: &str, data: &[u8]) -> Result<(), io::Error> {
+    pub async fn save_to_cache(url: &str, data: &[u8]) -> Result<(), AssetReaderError> {
         let filename = url_to_hash(url);
         let cache_path = PathBuf::from(CACHE_DIR).join(&filename);
 
-        async_fs::create_dir_all(CACHE_DIR).await.ok();
+        create_dir_all(CACHE_DIR)?;
 
-        let mut cache_file = async_fs::File::create(&cache_path).await?;
+        let mut cache_file = GuardedFile::create(&cache_path)
+            .await
+            .map_err(|err| match err {
+                AssetWriterError::Io(err) => AssetReaderError::Io(Arc::new(err)),
+            })?;
         cache_file.write_all(data).await?;
         cache_file.close().await?;
 
