@@ -121,7 +121,7 @@ impl FromWorld for AwaitLoadsBuilder {
 /// Once all handles have been loaded, the entity with this component will insert the
 /// [`LoadFinished`] component. You can use observers to react to the insertion of this component
 /// (and therefore, reacting to the load finishing).
-#[derive(Component)]
+#[derive(Component, Default, Clone, Debug)]
 #[component(immutable)]
 #[require(LoadableDependency)]
 pub struct AwaitLoads(
@@ -142,18 +142,38 @@ pub struct AwaitLoads(
 /// Once all dependencies have been loaded, the entity with this component will insert the
 /// [`LoadFinished`] component. You can use observers to react to the insertion of this component
 /// (and therefore, reacting to the load finishing).
-#[derive(Component)]
+#[derive(Component, Default, Clone, Debug)]
 #[component(immutable)]
 #[require(LoadableDependency)]
-pub struct AwaitDependencies(
+pub struct AwaitDependencies {
     /// The dependencies that this component should wait on to be loaded.
     ///
     /// The entities in this set are expected to have the [`LoadableDependency`] component. This is
     /// automatically added by [`AwaitLoads`], and also by [`Self`] (allowing you to await on
     /// another instance of [`Self`]). Once an entity in this set includes the [`LoadFinished`]
     /// component, it is considered loaded and will not be waited for any longer.
-    pub EntityHashSet,
-);
+    pub dependencies: EntityHashSet,
+    /// The action that should be taken when all dependencies have finished loading.
+    pub action: FinishLoadAction,
+}
+
+/// Enum of possible action
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinishLoadAction {
+    /// When all dependencies have loaded, this [`LoadableDependency`] will mark itself loaded by
+    /// inserting the [`LoadFinished`] component.
+    #[default]
+    InsertLoadFinished,
+    /// When all dependencies have loaded, this [`LoadableDependency`] will insert the
+    /// [`DependenciesFinished`].
+    ///
+    /// Once this happens, the user is expected to eventually add the [`LoadFinished`] component
+    /// themselves, to indicate to dependents that this [`LoadableDependency`] is finished loading.
+    ///
+    /// This can be though of as a "manual mode", allowing you to add custom logic for waiting
+    /// without needing to reinvent tools like [`AwaitDependencies`].
+    InsertDependenciesFinished,
+}
 
 /// A marker to indicate that an entity is a dependency that may load eventually.
 ///
@@ -165,8 +185,20 @@ pub struct LoadableDependency;
 
 /// A marker component indicating that a [`LoadableDependency`] (usually added through the
 /// [`AwaitLoads`] component) has finished loading.
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct LoadFinished;
+
+/// A marker component indicating that dependencies of an [`AwaitDependencies`] are all loaded.
+///
+/// This allows you to add behavior that happens after all dependencies have loaded, but before this
+/// [`LoadableDependency`] has finished loading. For example, you could wait on all dependencies to
+/// load, then start polling for some other condition, after which you manually insert the
+/// [`LoadFinished`] component.
+///
+/// After this component has been inserted, it's up to the user to insert the [`LoadFinished`]
+/// component themselves.
+#[derive(Component, Default)]
+pub struct DependenciesFinished;
 
 /// Observer to set up the [`AwaitLoads`] component to start waiting.
 fn on_insert_await_loads(
@@ -198,9 +230,10 @@ fn on_insert_await_dependencies(
     let Ok(await_dependencies) = await_dependencies.get(event.entity) else {
         return;
     };
-    commands
-        .entity(event.entity)
-        .insert(PendingDependencies(await_dependencies.0.clone()));
+    commands.entity(event.entity).insert(PendingDependencies {
+        dependencies: await_dependencies.dependencies.clone(),
+        action: await_dependencies.action,
+    });
 }
 
 /// Observer to clear related components to [`AwaitDependencies`].
@@ -219,10 +252,12 @@ struct PendingLoads(
 
 /// Component tracking the outstanding dependencies for an [`AwaitDependencies`] component.
 #[derive(Component)]
-struct PendingDependencies(
+struct PendingDependencies {
     /// The dependencies that still haven't loaded.
-    EntityHashSet,
-);
+    dependencies: EntityHashSet,
+    /// The action to take when all dependencies have loaded.
+    action: FinishLoadAction,
+}
 
 /// A system for polling whether an [`AwaitLoads`] component is finished loading.
 fn poll_pending_loads(
@@ -231,7 +266,9 @@ fn poll_pending_loads(
     mut commands: Commands,
 ) {
     for (entity, mut pending) in pending.iter_mut() {
-        pending.0.retain(|handle| !asset_server.is_loaded(handle));
+        pending
+            .0
+            .retain(|handle| !asset_server.is_loaded_with_dependencies(handle));
         if pending.0.is_empty() {
             commands
                 .entity(entity)
@@ -248,11 +285,11 @@ fn poll_pending_dependencies(
     mut commands: Commands,
 ) {
     for (entity, mut pending) in pending.iter_mut() {
-        pending.0.retain(|dependency| {
+        pending.dependencies.retain(|dependency| {
             let Ok(is_finished) = is_finished.get(*dependency) else {
                 warn!(
-                    "AwaitLoads component is waiting on entity {dependency:?}, but the entity \
-                      is not a `LoadableDependency`. Ignoring this dependency."
+                    "AwaitDependencies component is waiting on entity {dependency:?}, but the \
+                    entity is not a `LoadableDependency`. Ignoring this dependency."
                 );
                 return false;
             };
@@ -264,11 +301,17 @@ fn poll_pending_dependencies(
         // toposort of dependencies and then processing dependencies in order, or using observers
         // to listen for when the dependent loads, or just making our own sad version of
         // many-to-many relationships so the child can immediately notify the parent.
-        if pending.0.is_empty() {
-            commands
-                .entity(entity)
-                .remove::<PendingDependencies>()
-                .insert(LoadFinished);
+        if pending.dependencies.is_empty() {
+            let mut entity = commands.entity(entity);
+            entity.remove::<PendingDependencies>();
+            match pending.action {
+                FinishLoadAction::InsertLoadFinished => {
+                    entity.insert(LoadFinished);
+                }
+                FinishLoadAction::InsertDependenciesFinished => {
+                    entity.insert(DependenciesFinished);
+                }
+            }
         }
     }
 }
@@ -284,7 +327,10 @@ mod tests {
     };
 
     use crate::{
-        await_loads::{AwaitDependencies, AwaitLoadsBuilder, LoadFinished},
+        await_loads::{
+            AwaitDependencies, AwaitLoadsBuilder, DependenciesFinished, FinishLoadAction,
+            LoadFinished,
+        },
         io::memory::Dir,
         tests::{create_app_with_gate, run_app_until, TestAsset, TrivialLoader},
         AssetApp, AssetServer,
@@ -361,9 +407,10 @@ mod tests {
 
         let parent = app
             .world_mut()
-            .spawn(AwaitDependencies(EntityHashSet::from_iter([
-                child_1, child_2,
-            ])))
+            .spawn(AwaitDependencies {
+                dependencies: EntityHashSet::from_iter([child_1, child_2]),
+                ..Default::default()
+            })
             .id();
 
         app.update();
@@ -392,5 +439,68 @@ mod tests {
         assert!(is_load_finished(&app, child_1));
         assert!(is_load_finished(&app, child_2));
         assert!(is_load_finished(&app, parent));
+    }
+
+    #[test]
+    fn waits_for_dependencies_then_manual() {
+        let dir = Dir::default();
+
+        let (mut app, gate_opener) = create_app_with_gate(dir.clone());
+        app.init_asset::<TestAsset>()
+            .register_asset_loader(TrivialLoader);
+
+        let asset_server = app.world().resource::<AssetServer>().clone();
+
+        dir.insert_asset_text(Path::new("a.txt"), "");
+
+        let mut bottom = AwaitLoadsBuilder::new(asset_server.clone());
+        let a = bottom.load::<TestAsset>("a.txt");
+        let bottom = app.world_mut().spawn(bottom.build()).id();
+
+        let middle = app
+            .world_mut()
+            .spawn(AwaitDependencies {
+                dependencies: EntityHashSet::from_iter([bottom]),
+                action: FinishLoadAction::InsertDependenciesFinished,
+            })
+            .id();
+
+        let top = app
+            .world_mut()
+            .spawn(AwaitDependencies {
+                dependencies: EntityHashSet::from_iter([middle]),
+                ..Default::default()
+            })
+            .id();
+
+        app.update();
+
+        assert!(!is_load_finished(&app, bottom));
+        assert!(!is_load_finished(&app, middle));
+        assert!(!is_load_finished(&app, top));
+
+        gate_opener.open("a.txt");
+        run_app_until(&mut app, |_| asset_server.is_loaded(&a).then_some(()));
+
+        // Additional load to prove this isn't succeeding because of some execution ordering.
+        app.update();
+
+        // The bottom has loaded, but the bottom and top still haven't been marked loaded.
+        assert!(is_load_finished(&app, bottom));
+        assert!(!is_load_finished(&app, middle));
+        assert!(!is_load_finished(&app, top));
+        // Middle has been notified that its dependencies have finished loading.
+        assert!(app
+            .world()
+            .entity(middle)
+            .contains::<DependenciesFinished>());
+
+        app.world_mut().entity_mut(middle).insert(LoadFinished);
+
+        app.update();
+
+        assert!(is_load_finished(&app, bottom));
+        assert!(is_load_finished(&app, middle));
+        assert!(is_load_finished(&app, top));
     }
 }
