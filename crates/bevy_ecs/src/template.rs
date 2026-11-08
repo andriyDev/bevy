@@ -12,7 +12,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use bevy_platform::{collections::hash_map::RawEntryMut, hash::Hashed};
-use bevy_utils::PreHashMap;
+use bevy_utils::{AnyMap, PreHashMap};
 use indexmap::Equivalent;
 use variadics_please::all_tuples;
 
@@ -32,6 +32,19 @@ use variadics_please::all_tuples;
 pub trait Template {
     /// The type of value produced by this [`Template`].
     type Output;
+
+    /// Collects metadata about the template, storing it in `metadata`.
+    ///
+    /// This allows you to access data about the template, 1) in a type-erased way, and 2) before
+    /// building the template (allowing you to prepare some external resources before the template
+    /// is built).
+    ///
+    /// In general, you **should not** insert new values into the metadata when implementing this
+    /// method; Callers are expected to initialize `metadata` with the values it is interested, and
+    /// templates are expected to fill only the existing metadata. This can be seen as the caller
+    /// asking "tell me the metadata for these types", and the implementor responding by updating
+    /// the values of those types.
+    fn collect_metadata(&self, metadata: &mut TemplateMetadata);
 
     /// Uses this template and the given `entity` context to produce a [`Template::Output`].
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output>;
@@ -192,6 +205,18 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
     }
 }
 
+/// The metadata collected from templates.
+pub struct TemplateMetadata<'a> {
+    /// The values of collected metadata.
+    ///
+    /// When collecting metadata through [`Template::collect_metadata`], you should initialize the
+    /// types of metadata you are interested in. Templates in general should prefer to only record
+    /// metadata for values that are already present. This can be seen as the caller asking a
+    /// question (e.g., what metadata of this type do you have), and the template implementor
+    /// responding by inserting the metadata into that type.
+    pub values: &'a mut AnyMap,
+}
+
 /// [`FromTemplate`] is implemented for types that can be produced by a specific, canonical [`Template`]. This creates a way to correlate to the [`Template`] using the
 /// desired template output type. This is used by Bevy's scene system.
 ///
@@ -221,7 +246,7 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 ///
 /// Deriving [`FromTemplate`] will generate a [`Template`] type for the deriving type. The example above would generate a `PlayerTemplate` like this:
 /// ```
-/// # use bevy_ecs::{prelude::*, template::TemplateContext};
+/// # use bevy_ecs::{prelude::*, template::{TemplateContext, TemplateMetadata}};
 /// # #[derive(FromTemplate)]
 /// # struct Handle<T: core::marker::Unpin>(core::marker::PhantomData<T>);
 /// # #[derive(Default, Clone)]
@@ -240,6 +265,10 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 ///
 /// impl Template for PlayerTemplate {
 ///     type Output = Player;
+///     fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+///         self.image.collect_metadata(metadata);
+///     }
+///
 ///     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
 ///         Ok(Player {
 ///             image: self.image.build_template(context)?,
@@ -256,7 +285,7 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 ///
 /// [`FromTemplate`] derives can specify custom templates to use instead of a canonical [`FromTemplate`]:
 /// ```
-/// # use bevy_ecs::{prelude::*, template::TemplateContext};
+/// # use bevy_ecs::{prelude::*, template::{TemplateContext, TemplateMetadata}};
 /// # struct Image;
 /// #[derive(FromTemplate)]
 /// struct Counter {
@@ -269,6 +298,8 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 ///
 /// impl Template for Always10 {
 ///     type Output = usize;
+///
+///     fn collect_metadata(&self, metadata: &mut TemplateMetadata) {}
 ///
 ///     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
 ///         Ok(10)
@@ -290,7 +321,7 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 /// the template manually:
 ///
 /// ```
-/// # use bevy_ecs::{prelude::*, template::{TemplateContext, OptionTemplate}};
+/// # use bevy_ecs::{prelude::*, template::{TemplateContext, TemplateMetadata, OptionTemplate}};
 /// # use core::marker::PhantomData;
 /// # struct Handle<T>(PhantomData<T>);
 /// # struct HandleTemplate<T>(PhantomData<T>);
@@ -300,6 +331,9 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 /// # }
 /// # impl<T> Template for HandleTemplate<T> {
 /// #    type Output = Handle<T>;
+/// #    fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+/// #        unimplemented!()
+/// #    }
 /// #    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
 /// #        unimplemented!()
 /// #    }
@@ -322,7 +356,7 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 /// annotate it with the `template(built_in)` attribute to use [`BuiltInTemplate`] instead of [`FromTemplate`]:
 ///
 /// ```
-/// # use bevy_ecs::{prelude::*, template::TemplateContext};
+/// # use bevy_ecs::{prelude::*, template::{TemplateContext, TemplateMetadata}};
 /// # use core::marker::PhantomData;
 /// # struct Handle<T>(PhantomData<T>);
 /// # struct HandleTemplate<T>(PhantomData<T>);
@@ -332,6 +366,9 @@ impl Equivalent<Hashed<InnerSceneEntityReference>> for SceneEntityReference {
 /// # }
 /// # impl<T> Template for HandleTemplate<T> {
 /// #    type Output = Handle<T>;
+/// #    fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+/// #        unimplemented!()
+/// #    }
 /// #    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
 /// #        unimplemented!()
 /// #    }
@@ -358,6 +395,16 @@ macro_rules! template_impl {
         )]
         impl<$($template: Template),*> Template for TemplateTuple<($($template,)*)> {
             type Output = ($($template::Output,)*);
+
+            fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {
+                #[allow(
+                    non_snake_case,
+                    reason = "The names of these variables are provided by the caller, not by us."
+                )]
+                let ($($template,)*) = &self.0;
+                $($template.collect_metadata(_metadata);)*
+            }
+
             fn build_template(&self, _context: &mut TemplateContext) -> Result<Self::Output> {
                 #[allow(
                     non_snake_case,
@@ -389,6 +436,8 @@ all_tuples!(template_impl, 0, 12, T);
 // ["auto trait specialization" trick](https://github.com/coolcatcoder/rust_techniques/issues/1)
 impl<T: Clone + Unpin> Template for T {
     type Output = T;
+
+    fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
 
     fn build_template(&self, _context: &mut TemplateContext) -> Result<Self::Output> {
         Ok(self.clone())
@@ -450,6 +499,8 @@ impl From<Entity> for EntityTemplate {
 impl Template for EntityTemplate {
     type Output = Entity;
 
+    fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         Ok(match self {
             Self::Entity(entity) => *entity,
@@ -481,6 +532,8 @@ pub struct FnTemplate<F: Fn(&mut TemplateContext) -> Result<O>, O>(pub F);
 
 impl<F: Fn(&mut TemplateContext) -> Result<O> + Clone, O> Template for FnTemplate<F, O> {
     type Output = O;
+
+    fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
 
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         (self.0)(context)
@@ -545,17 +598,24 @@ impl<T> From<T> for OptionTemplate<T> {
 impl<T: Template> Template for OptionTemplate<T> {
     type Output = Option<T::Output>;
 
+    fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+        match self {
+            Self::Some(template) => template.collect_metadata(metadata),
+            Self::None => {}
+        }
+    }
+
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
-        Ok(match &self {
-            OptionTemplate::Some(template) => Some(template.build_template(context)?),
-            OptionTemplate::None => None,
+        Ok(match self {
+            Self::Some(template) => Some(template.build_template(context)?),
+            Self::None => None,
         })
     }
 
     fn clone_template(&self) -> Self {
         match self {
-            OptionTemplate::Some(value) => OptionTemplate::Some(value.clone_template()),
-            OptionTemplate::None => OptionTemplate::None,
+            Self::Some(value) => Self::Some(value.clone_template()),
+            Self::None => Self::None,
         }
     }
 }
@@ -571,6 +631,12 @@ impl<T> Default for VecTemplate<T> {
 
 impl<T: Template> Template for VecTemplate<T> {
     type Output = Vec<T::Output>;
+
+    fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+        for value in &self.0 {
+            value.collect_metadata(metadata);
+        }
+    }
 
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         let mut output = Vec::with_capacity(self.0.len());

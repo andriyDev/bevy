@@ -29,10 +29,10 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
             };
             let StructImpl {
                 template_fields,
+                template_field_prepares,
                 template_field_builds,
                 template_field_defaults,
                 template_field_clones,
-                ..
             } = result;
             match &data_struct.fields {
                 Fields::Named(_) => {
@@ -44,6 +44,10 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
 
                         impl #impl_generics #bevy_ecs::template::Template for #template_ident #type_generics #where_clause {
                             type Output = #type_ident #type_generics;
+                            fn collect_metadata(&self, metadata: &mut #bevy_ecs::template::TemplateMetadata) {
+                                #(#template_field_prepares;)*
+                            }
+
                             fn build_template(&self, context: &mut #bevy_ecs::template::TemplateContext) -> #bevy_ecs::error::Result<Self::Output> {
                                 #bevy_ecs::error::Result::Ok(#type_ident {
                                     #(#template_field_builds,)*
@@ -75,6 +79,10 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
 
                         impl #impl_generics #bevy_ecs::template::Template for #template_ident #type_generics #where_clause {
                             type Output = #type_ident #type_generics;
+                            fn collect_metadata(&self, metadata: &mut #bevy_ecs::template::TemplateMetadata) {
+                                #(#template_field_prepares;)*
+                            }
+
                             fn build_template(&self, context: &mut #bevy_ecs::template::TemplateContext) -> #bevy_ecs::error::Result<Self::Output> {
                                 #bevy_ecs::error::Result::Ok(#type_ident (
                                     #(#template_field_builds,)*
@@ -104,6 +112,8 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
 
                         impl #impl_generics #bevy_ecs::template::Template for #template_ident #type_generics #where_clause {
                             type Output = #type_ident;
+                            fn collect_metadata(&self, metadata: &mut #bevy_ecs::template::TemplateMetadata) {}
+
                             fn build_template(&self, context: &mut #bevy_ecs::template::TemplateContext) -> #bevy_ecs::error::Result<Self::Output> {
                                 #bevy_ecs::error::Result::Ok(#type_ident)
                             }
@@ -124,6 +134,7 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
         }
         Data::Enum(data_enum) => {
             let mut variant_definitions = Vec::new();
+            let mut variant_prepares = Vec::new();
             let mut variant_builds = Vec::new();
             let mut variant_clones = Vec::new();
             let mut variant_default_ident = None;
@@ -134,10 +145,10 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
                 };
                 let StructImpl {
                     template_fields,
+                    template_field_prepares,
                     template_field_builds,
                     template_field_defaults,
                     template_field_clones,
-                    ..
                 } = result;
 
                 let is_default = variant
@@ -155,6 +166,17 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
                                 #(#template_fields,)*
                             }
                         });
+
+                        let field_idents = fields.named.iter().map(|f| &f.ident);
+                        variant_prepares.push(quote! {
+                            // TODO: proper assignments here
+                            #template_ident::#variant_ident {
+                                #(#field_idents,)*
+                            } => {
+                                #(#template_field_prepares;)*
+                            }
+                        });
+
                         let field_idents = fields.named.iter().map(|f| &f.ident);
                         variant_builds.push(quote! {
                             // TODO: proper assignments here
@@ -196,6 +218,14 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
                         variant_definitions.push(quote! {
                             #variant_ident(#(#template_fields,)*)
                         });
+                        variant_prepares.push(quote! {
+                            // TODO: proper assignments here
+                            #template_ident::#variant_ident(
+                                #(#field_idents,)*
+                             ) => {
+                                #(#template_field_prepares;)*
+                            }
+                        });
                         variant_builds.push(quote! {
                             // TODO: proper assignments here
                             #template_ident::#variant_ident(
@@ -225,6 +255,7 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
                     }
                     Fields::Unit => {
                         variant_definitions.push(quote! {#variant_ident});
+                        variant_prepares.push(quote! {#template_ident::#variant_ident => {}});
                         variant_builds.push(
                             quote! {#template_ident::#variant_ident => #type_ident::#variant_ident},
                         );
@@ -252,6 +283,12 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
 
                 impl #impl_generics #bevy_ecs::template::Template for #template_ident #type_generics #where_clause {
                     type Output = #type_ident #type_generics;
+                    fn collect_metadata(&self, metadata: &mut #bevy_ecs::template::TemplateMetadata) {
+                        match self {
+                            #(#variant_prepares,)*
+                        }
+                    }
+
                     fn build_template(&self, context: &mut #bevy_ecs::template::TemplateContext) -> #bevy_ecs::error::Result<Self::Output> {
                         #bevy_ecs::error::Result::Ok(match self {
                             #(#variant_builds,)*
@@ -297,6 +334,7 @@ pub(crate) fn derive_from_template(input: TokenStream) -> TokenStream {
 
 struct StructImpl {
     template_fields: Vec<proc_macro2::TokenStream>,
+    template_field_prepares: Vec<proc_macro2::TokenStream>,
     template_field_builds: Vec<proc_macro2::TokenStream>,
     template_field_defaults: Vec<proc_macro2::TokenStream>,
     template_field_clones: Vec<proc_macro2::TokenStream>,
@@ -310,6 +348,7 @@ enum TemplateType {
 
 fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<StructImpl> {
     let mut template_fields = Vec::with_capacity(fields.len());
+    let mut template_field_prepares = Vec::with_capacity(fields.len());
     let mut template_field_builds = Vec::with_capacity(fields.len());
     let mut template_field_defaults = Vec::with_capacity(fields.len());
     let mut template_field_clones = Vec::with_capacity(fields.len());
@@ -359,6 +398,9 @@ fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<Struct
                 #field_maybe_pub #ident: #template_type
             });
             if is_enum {
+                template_field_prepares.push(quote! {
+                    #ident.collect_metadata(metadata)
+                });
                 template_field_builds.push(quote! {
                     #ident: #ident.build_template(context)?
                 });
@@ -366,6 +408,9 @@ fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<Struct
                     #ident: #bevy_ecs::template::Template::clone_template(#ident)
                 });
             } else {
+                template_field_prepares.push(quote! {
+                    self.#ident.collect_metadata(metadata)
+                });
                 template_field_builds.push(quote! {
                     #ident: self.#ident.build_template(context)?
                 });
@@ -383,6 +428,9 @@ fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<Struct
             });
             if is_enum {
                 let enum_tuple_ident = format_ident!("t{}", index);
+                template_field_prepares.push(quote! {
+                    #enum_tuple_ident.collect_metadata(metadata)
+                });
                 template_field_builds.push(quote! {
                     #enum_tuple_ident.build_template(context)?
                 });
@@ -390,6 +438,9 @@ fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<Struct
                     #bevy_ecs::template::Template::clone_template(#enum_tuple_ident)
                 });
             } else {
+                template_field_prepares.push(quote! {
+                    self.#index.collect_metadata(metadata)
+                });
                 template_field_builds.push(quote! {
                     self.#index.build_template(context)?
                 });
@@ -404,6 +455,7 @@ fn struct_impl(fields: &Fields, bevy_ecs: &Path, is_enum: bool) -> Result<Struct
     }
     Ok(StructImpl {
         template_fields,
+        template_field_prepares,
         template_field_builds,
         template_field_defaults,
         template_field_clones,

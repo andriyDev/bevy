@@ -9,7 +9,7 @@ use crate::{
         input::SystemInput, BoxedSystem, Commands, If, IntoSystem, Res, RunSystemError,
         SystemParamValidationError,
     },
-    template::TemplateContext,
+    template::{TemplateContext, TemplateMetadata},
     world::World,
 };
 use alloc::boxed::Box;
@@ -352,6 +352,8 @@ impl<I: SystemInput + 'static, O: 'static> SystemHandleTemplate<I, O> {
 
 impl<I: SystemInput + 'static, O: 'static> Template for SystemHandleTemplate<I, O> {
     type Output = SystemHandle<I, O>;
+
+    fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
 
     fn build_template(
         &self,
