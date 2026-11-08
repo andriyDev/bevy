@@ -1,4 +1,9 @@
-use core::{any::TypeId, hash::Hash};
+use alloc::boxed::Box;
+use core::{
+    any::{Any, TypeId},
+    hash::Hash,
+    ops::{Deref, DerefMut},
+};
 
 use bevy_platform::{
     collections::HashMap,
@@ -138,9 +143,7 @@ pub trait TypeIdHashMapExt<V> {
     fn remove_type<T: ?Sized + 'static>(&mut self) -> Option<V>;
 
     /// Gets the type `T`'s entry in the map for in-place manipulation.
-    fn entry_type<T: ?Sized + 'static>(
-        &mut self,
-    ) -> TypeIdHashMapEntry<'_, TypeId, V, NoOpHash>;
+    fn entry_type<T: ?Sized + 'static>(&mut self) -> TypeIdHashMapEntry<'_, TypeId, V, NoOpHash>;
 }
 
 impl<V> TypeIdHashMapExt<V> for TypeIdHashMap<V> {
@@ -165,10 +168,81 @@ impl<V> TypeIdHashMapExt<V> for TypeIdHashMap<V> {
     }
 
     #[inline]
-    fn entry_type<T: ?Sized + 'static>(
-        &mut self,
-    ) -> TypeIdHashMapEntry<'_, TypeId, V, NoOpHash> {
+    fn entry_type<T: ?Sized + 'static>(&mut self) -> TypeIdHashMapEntry<'_, TypeId, V, NoOpHash> {
         self.entry(TypeId::of::<T>())
+    }
+}
+
+/// A map that can store a single value of any type (that implements [`Any`]).
+#[derive(Default)]
+pub struct AnyMap(TypeIdHashMap<Box<dyn Any>>);
+
+impl AnyMap {
+    /// Creates an empty map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns whether this map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of values in this map.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Clears the map, removing all values.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Inserts a value of type `T`.
+    ///
+    /// If the map did not have this type present, [`None`] is returned.
+    ///
+    /// If the map did have this type present, the value is updated, and the old value is returned.
+    pub fn insert<T: Any>(&mut self, value: T) -> Option<Box<T>> {
+        self.0
+            .insert(TypeId::of::<T>(), Box::new(value))
+            .map(|value| value.downcast().unwrap())
+    }
+
+    /// Returns `true` if the map contains a value of type `T`.
+    pub fn contains_type<T: Any>(&self) -> bool {
+        self.0.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Gets the current value of type `T`, if present.
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0
+            .get(&TypeId::of::<T>())
+            .map(|value| value.downcast_ref().unwrap())
+    }
+
+    /// Gets the current value of type `T` mutably, if present.
+    pub fn get_mut<T: Any>(&mut self) -> Option<&mut T> {
+        self.0
+            .get_mut(&TypeId::of::<T>())
+            .map(|value| value.downcast_mut().unwrap())
+    }
+
+    /// Removes the value of type `T` from this map, if present.
+    pub fn remove<T: Any>(&mut self) -> Option<Box<T>> {
+        self.0
+            .remove(&TypeId::of::<T>())
+            .map(|value| value.downcast().unwrap())
+    }
+
+    /// Returns an iterator over all values in this map.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &dyn Any> {
+        self.0.values().map(Deref::deref)
+    }
+
+    /// Returns an iterator over all values (mutably) in this map.
+    pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = &mut dyn Any> {
+        self.0.values_mut().map(DerefMut::deref_mut)
     }
 }
 
@@ -213,5 +287,19 @@ mod tests {
                 map_2.iter().collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn any_map_gets_value() {
+        let mut map = AnyMap::new();
+        assert!(map.insert(17u32).is_none());
+        assert!(map.insert(10i8).is_none());
+
+        assert_eq!(map.insert(21u32), Some(Box::new(17u32)));
+
+        assert_eq!(map.get::<u32>(), Some(&21u32));
+        assert_eq!(map.get::<i8>(), Some(&10i8));
+
+        assert_eq!(map.remove::<i8>(), Some(Box::new(10i8)));
     }
 }
