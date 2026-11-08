@@ -705,7 +705,7 @@
 //!
 //! ```no_run
 //! # use bevy_scene::prelude::*;
-//! # use bevy_ecs::{prelude::*, template::TemplateContext};
+//! # use bevy_ecs::{prelude::*, template::{TemplateContext, TemplateMetadata}};
 //! # let mut world = World::new();
 //! # struct Handle<T>(std::marker::PhantomData<T>);
 //! # struct HandleTemplate<T>(String, std::marker::PhantomData<T>);
@@ -718,6 +718,7 @@
 //! # struct Image;
 //! # impl<T> Template for HandleTemplate<T> {
 //! #   type Output = Handle<T>;
+//! #   fn collect_metadata(&self, metadata: &mut TemplateMetadata) { todo!() }
 //! #   fn build_template(&self, context: &mut TemplateContext) -> Result<Handle<T>> { todo!() }
 //! #   fn clone_template(&self) -> Self { todo!() }
 //! # }
@@ -1000,6 +1001,7 @@ mod tests {
     use bevy_ecs::prelude::*;
     use bevy_ecs::relationship::Relationship;
     use bevy_ecs::system::{system_value, SystemHandle};
+    use bevy_ecs::template::TemplateMetadata;
     use bevy_ecs::world::DeferredWorld;
     use bevy_reflect::TypePath;
     use bevy_scene_macros::SceneComponent;
@@ -1856,6 +1858,8 @@ mod tests {
         impl Template for SizeTemplate {
             type Output = Size;
 
+            fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
             fn build_template(&self, _context: &mut TemplateContext) -> Result<Size> {
                 Ok(Size {
                     width: self.width,
@@ -2591,6 +2595,8 @@ mod tests {
     }
     impl Template for Fail {
         type Output = Fail;
+
+        fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
 
         fn build_template(
             &self,
@@ -3579,6 +3585,12 @@ mod tests {
 
         impl Template for FooTemplate {
             type Output = Foo;
+
+            fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+                for template in self.0.iter() {
+                    template.collect_metadata(metadata);
+                }
+            }
 
             fn build_template(
                 &self,

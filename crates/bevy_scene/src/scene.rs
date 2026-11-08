@@ -9,7 +9,9 @@ use bevy_ecs::{
     name::Name,
     relationship::RelationshipTarget,
     system::IntoObserverSystem,
-    template::{FnTemplate, FromTemplate, SceneEntityReference, Template, TemplateContext},
+    template::{
+        FnTemplate, FromTemplate, SceneEntityReference, Template, TemplateContext, TemplateMetadata,
+    },
 };
 use core::{any::TypeId, marker::PhantomData};
 use thiserror::Error;
@@ -529,6 +531,8 @@ where
     M: 'static,
 {
     type Output = EmptySceneEffect;
+
+    fn collect_metadata(&self, _metadata: &mut TemplateMetadata) {}
 
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         context.entity.observe(self.0.clone());

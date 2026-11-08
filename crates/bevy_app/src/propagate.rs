@@ -92,6 +92,10 @@ impl<C: FromTemplate + Component + Clone + PartialEq> FromTemplate for Propagate
 impl<C: Template<Output: Component + Clone + PartialEq>> Template for PropagateTemplate<C> {
     type Output = Propagate<C::Output>;
 
+    fn collect_metadata(&self, metadata: &mut bevy_ecs::template::TemplateMetadata) {
+        self.0.collect_metadata(metadata);
+    }
+
     fn build_template(
         &self,
         context: &mut bevy_ecs::template::TemplateContext,

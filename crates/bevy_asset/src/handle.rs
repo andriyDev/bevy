@@ -319,6 +319,10 @@ impl<T: Asset> From<Handle<T>> for HandleTemplate<T> {
 
 impl<T: Asset> Template for HandleTemplate<T> {
     type Output = Handle<T>;
+    fn collect_metadata(&self, _metadata: &mut bevy_ecs::template::TemplateMetadata) {
+        // TODO: we should register the path so that users can load it.
+    }
+
     fn build_template(&self, context: &mut TemplateContext) -> bevy_ecs::error::Result<Handle<T>> {
         Ok(match self {
             HandleTemplate::Path(asset_path) => context.resource::<AssetServer>().load(asset_path),
