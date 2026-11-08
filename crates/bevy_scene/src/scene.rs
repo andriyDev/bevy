@@ -49,6 +49,11 @@ use variadics_please::all_tuples;
 /// [`Entity`]: bevy_ecs::entity::Entity
 /// [`Component`]: bevy_ecs::component::Component
 pub trait Scene: SceneBox {
+    /// Collects metadata for all templates used by this scene.
+    ///
+    /// This allows accessing data about the templates before spawning/applying.
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata);
+
     /// This will apply the changes described in this [`Scene`] to the given [`ResolvedScene`]. This should not be called until all of the dependencies
     /// in [`Scene::register_dependencies`] have been loaded. The scene system will generally call this method on behalf of developers.
     ///
@@ -83,6 +88,9 @@ pub trait Scene: SceneBox {
 ///
 /// [`SceneListBox`]: crate::SceneListBox
 pub trait SceneBox: Send + Sync + 'static {
+    /// See [`Scene::collect_template_metadata`].
+    fn collect_template_metadata_box(&self, metadata: &mut TemplateMetadata);
+
     /// See [`Scene::resolve`].
     fn resolve_box(
         self: Box<Self>,
@@ -95,6 +103,11 @@ pub trait SceneBox: Send + Sync + 'static {
 }
 
 impl<S: Scene + Sized> SceneBox for S {
+    #[inline]
+    fn collect_template_metadata_box(&self, metadata: &mut TemplateMetadata) {
+        self.collect_template_metadata(metadata);
+    }
+
     #[inline]
     fn resolve_box(
         self: Box<Self>,
@@ -111,6 +124,10 @@ impl<S: Scene + Sized> SceneBox for S {
 }
 
 impl<T: ?Sized + SceneBox> Scene for Box<T> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        (**self).collect_template_metadata_box(metadata);
+    }
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -182,6 +199,19 @@ pub struct ResolveContext<'a> {
 macro_rules! scene_impl {
     ($($patch: ident),*) => {
         impl<$($patch: Scene),*> Scene for ($($patch,)*) {
+            fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {
+                #[expect(
+                    clippy::allow_attributes,
+                    reason = "This is inside a macro, and as such, may not trigger in all cases."
+                )]
+                #[allow(
+                    non_snake_case,
+                    reason = "The names of these variables are provided by the caller, not by us."
+                )]
+                let ($($patch,)*) = self;
+                $($patch.collect_template_metadata(_metadata);)*
+            }
+
             fn resolve(self, _context: &mut ResolveContext, _scene: &mut ResolvedScene) -> Result<(), ResolveSceneError> {
                 #[expect(
                     clippy::allow_attributes,
@@ -219,6 +249,13 @@ where
     S: Scene,
 {
     #[inline]
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        if let Some(value) = self {
+            value.collect_template_metadata(metadata);
+        }
+    }
+
+    #[inline]
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -240,6 +277,13 @@ impl<L: SceneList> SceneList for Option<L>
 where
     L: SceneList,
 {
+    #[inline]
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        if let Some(value) = self {
+            value.collect_template_metadata(metadata);
+        }
+    }
+
     #[inline]
     fn resolve_list(
         self,
@@ -327,6 +371,8 @@ impl<
         T: Template<Output: Component> + Send + Sync + Default + 'static,
     > Scene for TemplatePatch<F, T>
 {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -346,6 +392,10 @@ pub struct InsertTemplate {
     pub template: Box<dyn ErasedTemplate>,
 }
 impl Scene for InsertTemplate {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.template.collect_metadata(metadata);
+    }
+
     fn resolve(
         self,
         _context: &mut ResolveContext,
@@ -377,6 +427,11 @@ impl<R: RelationshipTarget> RelatedScenes<R> {
 }
 
 impl<R: RelationshipTarget> Scene for RelatedScenes<R> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.related_template_list
+            .collect_template_metadata(metadata);
+    }
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -412,6 +467,8 @@ impl<I: Into<AssetPath<'static>>> From<I> for CachedSceneAsset {
 }
 
 impl Scene for CachedSceneAsset {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -436,6 +493,8 @@ impl Scene for CachedSceneAsset {
 impl<F: (Fn(&mut TemplateContext) -> Result<O>) + Clone + Send + Sync + 'static, O: Component> Scene
     for FnTemplate<F, O>
 {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         _context: &mut ResolveContext,
@@ -470,6 +529,8 @@ impl NameEntityReference {
 }
 
 impl Scene for NameEntityReference {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -486,6 +547,10 @@ impl Scene for NameEntityReference {
 pub struct SceneScope<S: Scene>(pub S);
 
 impl<S: Scene> Scene for SceneScope<S> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.0.collect_template_metadata(metadata);
+    }
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -505,6 +570,10 @@ impl<S: Scene> Scene for SceneScope<S> {
 pub struct SceneListScope<L: SceneList>(pub L);
 
 impl<L: SceneList> SceneList for SceneListScope<L> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.0.collect_template_metadata(metadata);
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -550,6 +619,8 @@ where
     E: EventPattern<Event: EntityEvent>,
     M: 'static,
 {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         _context: &mut ResolveContext,
@@ -613,6 +684,13 @@ impl<S: SceneList> From<SceneListScope<S>> for Option<Box<dyn SceneList>> {
 pub struct InitTemplate<T>(PhantomData<T>);
 
 impl<T: Template<Output: Component> + Default + Send + Sync + 'static> Scene for InitTemplate<T> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        // It's possible we won't end up inserting this template, but if we do, we should make sure
+        // its data is prepared. Otherwise, a user of this template could see this template
+        // unprepared.
+        T::default().collect_metadata(metadata);
+    }
+
     fn resolve(
         self,
         context: &mut ResolveContext,
@@ -629,6 +707,8 @@ pub struct SceneFunction<F: FnOnce(&mut ResolveContext, &mut ResolvedScene)>(pub
 impl<F: FnOnce(&mut ResolveContext, &mut ResolvedScene) + Send + Sync + 'static> Scene
     for SceneFunction<F>
 {
+    fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {}
+
     fn resolve(
         self,
         context: &mut ResolveContext,

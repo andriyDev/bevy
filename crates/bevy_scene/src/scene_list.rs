@@ -1,6 +1,7 @@
 use crate::{
     ResolveContext, ResolveSceneError, ResolvedScene, Scene, SceneDependencies, SceneScope,
 };
+use bevy_ecs::template::TemplateMetadata;
 use smallvec::SmallVec;
 use variadics_please::all_tuples;
 
@@ -10,6 +11,11 @@ use variadics_please::all_tuples;
 ///
 /// [`Entity`]: bevy_ecs::entity::Entity
 pub trait SceneList: SceneListBox {
+    /// Prepares any templates used by this scene list.
+    ///
+    /// This allows accessing data about the templates before spawning/appling.
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata);
+
     /// This will apply the changes described in this [`SceneList`] to the given [`Vec<ResolvedScene>`]. This should not be called until all of
     /// the dependencies in [`Scene::register_dependencies`] have been loaded.
     fn resolve_list(
@@ -41,6 +47,9 @@ pub trait SceneList: SceneListBox {
 ///
 /// [`SceneBox`]: crate::SceneBox
 pub trait SceneListBox: Send + Sync + 'static {
+    /// See [`Scene::collect_template_metadata`].
+    fn collect_template_metadata_box(&self, metadata: &mut TemplateMetadata);
+
     /// See [`SceneList::resolve_list`].
     fn resolve_list_box(
         self: Box<Self>,
@@ -53,6 +62,11 @@ pub trait SceneListBox: Send + Sync + 'static {
 }
 
 impl<L: SceneList> SceneListBox for L {
+    #[inline]
+    fn collect_template_metadata_box(&self, metadata: &mut TemplateMetadata) {
+        self.collect_template_metadata(metadata);
+    }
+
     #[inline]
     fn resolve_list_box(
         self: Box<Self>,
@@ -69,6 +83,10 @@ impl<L: SceneList> SceneListBox for L {
 }
 
 impl<T: ?Sized + SceneListBox> SceneList for Box<T> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        (**self).collect_template_metadata_box(metadata);
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -88,6 +106,10 @@ impl<T: ?Sized + SceneListBox> SceneList for Box<T> {
 pub struct EntityScene<S>(pub S);
 
 impl<S: Scene> SceneList for EntityScene<S> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.0.collect_template_metadata(metadata);
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -107,6 +129,19 @@ impl<S: Scene> SceneList for EntityScene<S> {
 macro_rules! scene_list_impl {
     ($($list: ident),*) => {
         impl<$($list: SceneList),*> SceneList for ($($list,)*) {
+            fn collect_template_metadata(&self, _metadata: &mut TemplateMetadata) {
+                #[expect(
+                    clippy::allow_attributes,
+                    reason = "This is inside a macro, and as such, may not trigger in all cases."
+                )]
+                #[allow(
+                    non_snake_case,
+                    reason = "The names of these variables are provided by the caller, not by us."
+                )]
+                let ($($list,)*) = self;
+                $($list.collect_template_metadata(_metadata);)*
+            }
+
             fn resolve_list(self, _context: &mut ResolveContext, _scenes: &mut Vec<ResolvedScene>) -> Result<(), ResolveSceneError> {
                 #[expect(
                     clippy::allow_attributes,
@@ -140,6 +175,12 @@ macro_rules! scene_list_impl {
 all_tuples!(scene_list_impl, 0, 12, P);
 
 impl<S: Scene, const N: usize> SceneList for SmallVec<[S; N]> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        for scene in self {
+            scene.collect_template_metadata(metadata);
+        }
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -161,6 +202,12 @@ impl<S: Scene, const N: usize> SceneList for SmallVec<[S; N]> {
 }
 
 impl<const N: usize> SceneList for SmallVec<[Box<dyn SceneList>; N]> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        for scene in self {
+            scene.collect_template_metadata(metadata);
+        }
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -180,6 +227,12 @@ impl<const N: usize> SceneList for SmallVec<[Box<dyn SceneList>; N]> {
 }
 
 impl<S: Scene> SceneList for Vec<S> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        for scene in self {
+            scene.collect_template_metadata(metadata);
+        }
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -201,6 +254,12 @@ impl<S: Scene> SceneList for Vec<S> {
 }
 
 impl SceneList for Vec<Box<dyn SceneList>> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        for scene in self {
+            scene.collect_template_metadata(metadata);
+        }
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,
@@ -220,6 +279,10 @@ impl SceneList for Vec<Box<dyn SceneList>> {
 }
 
 impl<S: Scene> SceneList for SceneScope<S> {
+    fn collect_template_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.0.collect_template_metadata(metadata);
+    }
+
     fn resolve_list(
         self,
         context: &mut ResolveContext,

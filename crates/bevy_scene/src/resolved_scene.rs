@@ -8,6 +8,7 @@ use bevy_ecs::{
     relationship::{Relationship, RelationshipTarget},
     template::{
         FromTemplate, SceneEntityReference, SceneEntityReferences, Template, TemplateContext,
+        TemplateMetadata,
     },
     world::{EntityWorldMut, World},
 };
@@ -702,6 +703,9 @@ impl RelatedResolvedScenes {
 /// A type-erased, object-safe, downcastable version of [`Template`] that produces a [`Component`], which will be added to the
 /// given [`BundleWriter`].
 pub trait ErasedTemplate: Any + Send + Sync {
+    /// See [`Template::collect_metadata`].
+    fn collect_metadata(&self, metadata: &mut TemplateMetadata);
+
     /// Applies this template to the given `entity`.
     ///
     /// # Safety
@@ -720,6 +724,10 @@ pub trait ErasedTemplate: Any + Send + Sync {
 }
 
 impl<T: Template<Output: SceneEffect> + Send + Sync + 'static> ErasedTemplate for T {
+    fn collect_metadata(&self, metadata: &mut TemplateMetadata) {
+        self.collect_metadata(metadata);
+    }
+
     unsafe fn apply(
         &self,
         context: &mut TemplateContext,
