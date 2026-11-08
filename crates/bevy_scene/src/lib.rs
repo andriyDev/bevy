@@ -932,6 +932,7 @@ pub mod macro_utils;
 
 extern crate alloc;
 
+mod await_loads;
 mod resolved_scene;
 mod scene;
 mod scene_component;
@@ -940,6 +941,7 @@ mod scene_patch;
 mod spawn;
 mod spawn_system;
 
+pub use await_loads::*;
 pub use resolved_scene::*;
 pub use scene::*;
 pub use scene_component::*;

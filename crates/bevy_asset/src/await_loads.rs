@@ -200,6 +200,44 @@ pub struct LoadFinished;
 #[derive(Component, Default)]
 pub struct DependenciesFinished;
 
+/// Metadata for templates about assets that will be loaded.
+///
+/// This is primarily relevant to [`HandleTemplate`], which will record the assets it intends to
+/// load in this metadata.
+#[derive(Default, Clone, Debug)]
+pub struct AssetLoadMetadata(HashSet<(TypeId, AssetPath<'static>)>);
+
+impl AssetLoadMetadata {
+    /// Creates an empty instance of metadata.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records that the caller intends to load an asset of type `A` and `path`.
+    pub fn record_load<A: Asset>(&mut self, path: AssetPath<'static>) {
+        self.record_load_erased(TypeId::of::<A>(), path);
+    }
+
+    /// Records that the caller intends to load an asset of type `type_id` and `path`.
+    pub fn record_load_erased(&mut self, type_id: TypeId, path: AssetPath<'static>) {
+        self.0.insert((type_id, path));
+    }
+
+    /// Returns the asset loads that were previously recorded.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (TypeId, &AssetPath<'static>)> {
+        self.0.iter().map(|(t, p)| (*t, p))
+    }
+}
+
+impl IntoIterator for AssetLoadMetadata {
+    type Item = (TypeId, AssetPath<'static>);
+    type IntoIter = <HashSet<(TypeId, AssetPath<'static>)> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 /// Observer to set up the [`AwaitLoads`] component to start waiting.
 fn on_insert_await_loads(
     event: On<Insert<AwaitLoads>>,

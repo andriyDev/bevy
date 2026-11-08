@@ -1,6 +1,6 @@
 use crate::{
-    Asset, AssetId, AssetIndex, AssetIndexAllocator, AssetPath, AssetServer, Assets,
-    ErasedAssetIndex, ReflectHandle, UntypedAssetId,
+    await_loads::AssetLoadMetadata, Asset, AssetId, AssetIndex, AssetIndexAllocator, AssetPath,
+    AssetServer, Assets, ErasedAssetIndex, ReflectHandle, UntypedAssetId,
 };
 use alloc::sync::Arc;
 use bevy_ecs::template::{FromTemplate, SpecializeFromTemplate, Template, TemplateContext};
@@ -319,8 +319,17 @@ impl<T: Asset> From<Handle<T>> for HandleTemplate<T> {
 
 impl<T: Asset> Template for HandleTemplate<T> {
     type Output = Handle<T>;
-    fn collect_metadata(&self, _metadata: &mut bevy_ecs::template::TemplateMetadata) {
-        // TODO: we should register the path so that users can load it.
+    fn collect_metadata(&self, metadata: &mut bevy_ecs::template::TemplateMetadata) {
+        match self {
+            Self::Path(asset_path) => {
+                let Some(metadata) = metadata.values.get_mut::<AssetLoadMetadata>() else {
+                    return;
+                };
+                metadata.record_load::<T>(asset_path.clone());
+            }
+            Self::Handle(_) => {}
+            Self::Value(_) => {}
+        }
     }
 
     fn build_template(&self, context: &mut TemplateContext) -> bevy_ecs::error::Result<Handle<T>> {
